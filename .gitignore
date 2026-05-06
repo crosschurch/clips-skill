@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.venv/
+venv/
+.env
+.env.local
+
+# Personal sermon working directories should never be committed
+sermon */
+sermon_*/
+*.mp4
+*.mp3
+*.m4a
+*.wav
+
+# Local Descript token store (kept in ~/.config/sermon-clips/)
+descript.env
+
+# Shipping assets are large; users provide their own. To bundle them, override
+# this rule per-repo (e.g., remove the line below and force-add specific files).
+assets/
