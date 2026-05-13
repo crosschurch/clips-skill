@@ -42,6 +42,15 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
+# Bypass macOS system proxy auto-detection. urllib's default opener calls
+# _scproxy.get_proxies() which can hang indefinitely on com.apple.netsrc when
+# SCDynamicStore is slow to respond — symptom is the script idling at 0% CPU
+# with no network sockets and no stdout. An explicit empty ProxyHandler
+# replaces the default opener and skips proxy auto-detection entirely.
+urllib.request.install_opener(
+    urllib.request.build_opener(urllib.request.ProxyHandler({}))
+)
+
 API_BASE = "https://descriptapi.com/v1"
 DEFAULT_FOLDER = "Cross Church"
 DEFAULT_TOP = 10
@@ -121,6 +130,28 @@ def vertical_path_for(moment: dict, vertical_dir: Path) -> Path | None:
     return cand if cand.is_file() else None
 
 
+def discover_edited_verticals(vertical_dir: Path) -> list[dict]:
+    """If find_moments.py was run with --edited, vertical_clips/ contains
+    edited_*_vertical.mp4 files that aren't recorded in moments.json.
+    Return moment-shaped dicts for them so the rest of the upload pipeline
+    can treat them as the upload set.
+    """
+    out = []
+    for path in sorted(vertical_dir.glob("edited_*_vertical.mp4")):
+        stem = path.stem
+        if stem.endswith("_vertical"):
+            stem = stem[: -len("_vertical")]
+        title = stem.removeprefix("edited_").replace("_", " ")
+        out.append({
+            "title": title,
+            "file": stem + ".mp4",
+            "vertical_file": path.name,
+            "virality_total": 100,  # treated as top-tier; no per-clip ranking in edited mode
+            "source_type": "edited",
+        })
+    return out
+
+
 def sanitize_media_key(title: str, idx: int) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", title).strip("_")
     return f"{idx:02d}_{safe}.mp4"[:120]
@@ -170,8 +201,13 @@ def main() -> int:
                     help="Session prefix for project names (default: working dir title-cased)")
     ap.add_argument("--work-dir", default=".",
                     help="Session directory with viral_clips/ and vertical_clips/")
+    ap.add_argument("--wait", action="store_true",
+                    help="Wait for Descript to finish processing each job (slow — adds ~10 min per clip "
+                         "because the poll loop always times out before Descript marks the job terminal). "
+                         "Default is fire-and-forget: the project URL is valid as soon as the import POST "
+                         "returns; Descript finishes the import in the background.")
     ap.add_argument("--skip-poll", action="store_true",
-                    help="Don't wait for job completion (faster, less confirmation)")
+                    help=argparse.SUPPRESS)  # legacy alias, now the default
     ap.add_argument("--skip", type=int, default=0,
                     help="Skip the first N picks (resume after partial failure)")
     ap.add_argument("--dry-run", action="store_true",
@@ -183,17 +219,22 @@ def main() -> int:
 
     moments_path = work / "viral_clips" / "moments.json"
     vertical_dir = work / "vertical_clips"
-    if not moments_path.is_file():
-        sys.exit(f"ERROR: {moments_path} not found — run find_moments.py first")
     if not vertical_dir.is_dir():
         sys.exit(f"ERROR: {vertical_dir} not found — run make_vertical.py first")
 
-    moments = json.loads(moments_path.read_text())
-    if not isinstance(moments, list):
-        sys.exit("ERROR: moments.json is not a list")
-
-    limit = None if args.all else args.top
-    picks = pick_moments(moments, limit)
+    edited_picks = discover_edited_verticals(vertical_dir)
+    if edited_picks:
+        print(f"Edited mode: found {len(edited_picks)} edited vertical(s) — "
+              "uploading those instead of top-N simple cuts.")
+        picks = edited_picks
+    else:
+        if not moments_path.is_file():
+            sys.exit(f"ERROR: {moments_path} not found — run find_moments.py first")
+        moments = json.loads(moments_path.read_text())
+        if not isinstance(moments, list):
+            sys.exit("ERROR: moments.json is not a list")
+        limit = None if args.all else args.top
+        picks = pick_moments(moments, limit)
 
     plan: list[tuple[int, Path, dict]] = []
     skipped: list[dict] = []
@@ -212,7 +253,13 @@ def main() -> int:
     session = args.session or project_name_from_cwd()
     print(f"Session : {session}")
     print(f"Folder  : {args.folder}")
-    print(f"Clips   : {len(plan)} ({'all' if args.all else f'top {args.top}'})")
+    if edited_picks:
+        plan_label = "all edited"
+    elif args.all:
+        plan_label = "all"
+    else:
+        plan_label = f"top {args.top}"
+    print(f"Clips   : {len(plan)} ({plan_label})")
     print(f"Mode    : one Descript project per clip (API limit: ≤4 media per import)")
     for idx, vpath, m in plan:
         size_mb = vpath.stat().st_size / 1_048_576
@@ -279,7 +326,7 @@ def main() -> int:
             continue
 
         status = "submitted"
-        if not args.skip_poll:
+        if args.wait:
             try:
                 final = poll_job(job_id, token, poll_every=5, max_wait=600)
                 status = final.get("status", "unknown")

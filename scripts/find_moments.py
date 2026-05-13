@@ -4,8 +4,13 @@ Reads Whisper transcripts from a working directory, asks Claude to identify
 the best viral sermon moments, then cuts each with ffmpeg.
 
 Usage:
-    python3 find_moments.py [work_dir]
+    python3 find_moments.py [work_dir] [--edited]
     work_dir defaults to CWD
+
+    --edited   Generate multi-segment edited clips per marker (fluff cut out)
+               instead of single-window simple cuts. Edited verticals become
+               the Descript upload set. Costs more Claude calls; opt in only
+               when shorts-quality output is the goal.
 
 Output:
     <work_dir>/viral_clips/*.mp4
@@ -19,7 +24,9 @@ import glob
 import re
 import sys
 
-WORK_DIR = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
+EDITED_MODE = "--edited" in sys.argv
+_positional = [a for a in sys.argv[1:] if not a.startswith("--")]
+WORK_DIR = _positional[0] if _positional else os.getcwd()
 TRANSCRIPTS_DIR = os.path.join(WORK_DIR, "transcripts")
 CLIPS_DIR = os.path.join(WORK_DIR, "viral_clips")
 os.makedirs(CLIPS_DIR, exist_ok=True)
@@ -70,6 +77,14 @@ HOOK TYPE — classify each clip's opening as one of:
 
 HIGHLIGHT BANGER — for each moment, identify the single most punchy, standalone 1-3 sentence statement in the clip. It must be a COMPLETE thought that lands hard with zero surrounding context — not a setup, not a teaser, not a question that goes unanswered. Think: the one sentence someone would screenshot and text to a friend.
 
+QUOTE DUMP — separately, identify 2-5 standalone QUOTES from this transcript suitable for social media quote-card images (plain text, no video needed). A quote must:
+- Be 1-3 sentences, 8-220 characters total
+- Be a complete self-contained thought that lands with zero context
+- Read powerfully as pure text — strip filler ("you know", "I mean", "uh", false starts, mid-sentence corrections). Lightly clean punctuation and capitalization so it reads as written prose, but don't paraphrase or invent words the speaker didn't say
+- Avoid quotes that depend on a story setup, a previous illustration, or a "this" / "that" / "he said" without antecedent
+- Prefer convicting one-liners, reframes, paradoxes, or sticky truth statements over narrative beats
+- Quotes can come from the same content as a moment — they are independent of clip selection
+
 Return ONLY valid JSON (no markdown, no explanation). Sort moments by total virality score descending:
 {{
   "moments": [
@@ -88,6 +103,9 @@ Return ONLY valid JSON (no markdown, no explanation). Sort moments by total vira
       "teaser_start": <seconds — start of the standalone banger statement>,
       "teaser_end": <seconds — end of that complete thought, typically 5-12s after teaser_start>
     }}
+  ],
+  "quotes": [
+    "<punchy standalone quote, 1-3 sentences, lightly cleaned for readability>"
   ]
 }}"""
 
@@ -129,7 +147,7 @@ def ask_claude(transcript_text, clip_name, clip_duration):
 
     try:
         data = json.loads(match.group(0))
-        return data.get("moments", []), []
+        return data.get("moments", []), data.get("quotes", [])
     except json.JSONDecodeError as e:
         print(f"  ✗ JSON parse error: {e}\nResponse: {response[:400]}")
         return [], []
@@ -351,7 +369,7 @@ def process_full_sermon(video_path, transcript_path, clips_dir):
     """
     Chunk the full sermon transcript into 6-minute windows, ask Claude for viral
     moments per chunk, convert chunk-relative timestamps to absolute, cut clips.
-    Returns list of moment dicts (same shape as marker clip moments).
+    Returns (moment dicts, quote strings) — quotes are aggregated across chunks.
     """
     print(f"\n{'='*58}")
     print(f"Full sermon: {os.path.basename(video_path)}")
@@ -364,6 +382,7 @@ def process_full_sermon(video_path, transcript_path, clips_dir):
     print(f"  {total_duration:.0f}s ({total_duration/60:.1f} min) | {len(all_segs)} transcript segments")
 
     sermon_moments = []
+    sermon_quotes = []
     accepted_ranges = []  # within-sermon overlap detection (separate from marker clip pool)
     total_cut = 0
     chunk_num = 0
@@ -395,7 +414,8 @@ def process_full_sermon(video_path, transcript_path, clips_dir):
         e_fmt = f"{int(chunk_end//60)}:{int(chunk_end%60):02d}"
         print(f"\n  Chunk {chunk_num}: {s_fmt}–{e_fmt} | {len(chunk_segs)} segs | asking Claude...")
 
-        moments, _ = ask_claude(transcript_text, chunk_label, chunk_dur)
+        moments, quotes = ask_claude(transcript_text, chunk_label, chunk_dur)
+        sermon_quotes.extend(quotes)
         if not moments:
             print("    No moments found")
             chunk_start += FULL_SERMON_CHUNK_SIZE - FULL_SERMON_CHUNK_OVERLAP
@@ -467,7 +487,8 @@ def process_full_sermon(video_path, transcript_path, clips_dir):
         chunk_start += FULL_SERMON_CHUNK_SIZE - FULL_SERMON_CHUNK_OVERLAP
 
     print(f"\n  ✓ {total_cut} clips from full sermon")
-    return sermon_moments
+    print(f"  ✓ {len(sermon_quotes)} raw quotes from full sermon")
+    return sermon_moments, sermon_quotes
 
 
 def marker_abs_start(stem):
@@ -477,6 +498,45 @@ def marker_abs_start(stem):
         return 0.0
     h, mn, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
     return h * 3600 + mn * 60 + s
+
+
+def dedupe_quotes(quotes):
+    """
+    Drop duplicates and near-duplicates. Marker clips overlap the full sermon
+    transcript, so the same quote often arrives from 2-3 Claude calls. We normalize
+    to lowercase alphanumerics, then suppress any quote whose normalized form is
+    a substring of a quote we've already kept (or vice versa).
+    """
+    cleaned = []
+    for q in quotes:
+        if not isinstance(q, str):
+            continue
+        q = q.strip().strip('"').strip("'").strip()
+        if 8 <= len(q) <= 280:
+            cleaned.append(q)
+
+    def norm(s):
+        return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
+    kept = []
+    kept_norms = []
+    for q in cleaned:
+        n = norm(q)
+        if not n:
+            continue
+        dup = False
+        for i, kn in enumerate(kept_norms):
+            if n == kn or n in kn or kn in n:
+                # keep the longer one (more complete thought)
+                if len(q) > len(kept[i]):
+                    kept[i] = q
+                    kept_norms[i] = n
+                dup = True
+                break
+        if not dup:
+            kept.append(q)
+            kept_norms.append(n)
+    return kept
 
 
 def overlaps(abs_start, abs_end, accepted, threshold=0.5):
@@ -500,8 +560,10 @@ def main():
     print(f"Work dir : {WORK_DIR}")
     print(f"Transcripts: {len(transcript_files)} file(s)")
     print(f"Output   : {CLIPS_DIR}")
+    print(f"Mode     : {'EDITED (multi-segment per marker)' if EDITED_MODE else 'simple (single-window per marker)'}")
 
     all_moments = []
+    all_quotes = []  # raw quote strings from every Claude call — deduped later
     all_edited_clips = []  # list of (source_video_path, edited_clip_dict)
     total_cut = 0
     accepted_ranges = []  # (abs_start, abs_end) for cross-clip overlap detection
@@ -530,17 +592,26 @@ def main():
         transcript_text = format_transcript(segments)
 
         print(f"  {len(segments)} segments | {duration:.0f}s clip")
-        print("  Asking Claude for best moments...")
 
-        moments, _ = ask_claude(transcript_text, stem, duration)
+        if EDITED_MODE:
+            # Edited mode: skip simple per-marker cuts entirely. Only ask
+            # for multi-segment edited clips and accumulate them for the cut step.
+            print("  Asking Claude for edited (multi-segment) clips...")
+            edited_clips = ask_claude_edited(transcript_text, stem, duration)
+            print(f"  {len(edited_clips)} edited clip(s) identified")
+            for ec in edited_clips:
+                all_edited_clips.append((video_path, ec))
+            continue
+
+        print("  Asking Claude for best moments...")
+        moments, quotes = ask_claude(transcript_text, stem, duration)
+        all_quotes.extend(quotes)
 
         if not moments:
             print("  No moments returned")
             continue
 
-        print(f"  {len(moments)} moment(s) identified — asking for edited clips...")
-        edited_clips = ask_claude_edited(transcript_text, stem, duration)
-        print(f"  {len(edited_clips)} edited clip(s) identified")
+        edited_clips = []  # not requested in default mode
 
         for i, m in enumerate(moments):
             start = float(m.get("start", 0))
@@ -601,18 +672,15 @@ def main():
             else:
                 print(f"       ✗ Cut failed")
 
-        # Accumulate edited clips for this source
-        for ec in edited_clips:
-            all_edited_clips.append((video_path, ec))
-
     # Process full sermon video if transcript exists
     full_sermon_video = find_full_sermon_video(WORK_DIR)
     if full_sermon_video:
         full_stem = os.path.splitext(os.path.basename(full_sermon_video))[0]
         full_transcript = os.path.join(TRANSCRIPTS_DIR, full_stem + '.json')
         if os.path.exists(full_transcript):
-            sermon_moments = process_full_sermon(full_sermon_video, full_transcript, CLIPS_DIR)
+            sermon_moments, sermon_quotes = process_full_sermon(full_sermon_video, full_transcript, CLIPS_DIR)
             all_moments.extend(sermon_moments)
+            all_quotes.extend(sermon_quotes)
             total_cut += len(sermon_moments)
         else:
             print(f"\n⚠ Full sermon found ({os.path.basename(full_sermon_video)}) but no transcript.")
@@ -623,15 +691,26 @@ def main():
     with open(manifest, "w") as f:
         json.dump(all_moments, f, indent=2)
 
+    # Write deduped quotes manifest
+    deduped_quotes = dedupe_quotes(all_quotes)
+    quotes_manifest = os.path.join(CLIPS_DIR, "quotes.json")
+    with open(quotes_manifest, "w") as f:
+        json.dump(deduped_quotes, f, indent=2)
+
     print(f"\n{'='*58}")
     print(f"✓ Cut {total_cut} clips  →  {CLIPS_DIR}")
     print(f"✓ Manifest: {manifest}")
+    print(f"✓ Quotes: {len(deduped_quotes)} unique (from {len(all_quotes)} raw)  →  {quotes_manifest}")
 
     # Build horizontal highlight reel from top moments' teaser hooks
-    make_highlight_reel(all_moments, WORK_DIR, CLIPS_DIR)
+    # (uses simple-cut moments' teaser timestamps; in --edited mode these come
+    # only from the full sermon path. Skip if neither produced any moments.)
+    if all_moments:
+        make_highlight_reel(all_moments, WORK_DIR, CLIPS_DIR)
 
     # Cut edited clips into viral_clips/ so make_vertical picks them up
-    make_edited_clips(all_edited_clips, CLIPS_DIR)
+    if EDITED_MODE:
+        make_edited_clips(all_edited_clips, CLIPS_DIR)
 
 
 def make_edited_clips(all_edited_clips, edited_dir):

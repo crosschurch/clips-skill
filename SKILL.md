@@ -24,6 +24,24 @@ Full pipeline: OBS recording → transcription → viral moment selection → ho
 - Video file argument → run full pipeline from the raw recording
 - Directory argument → find existing marker clips and continue from there
 
+### Modes — `--edited` is opt-in only
+
+Default: simple per-marker cuts (one window per moment) + full sermon clips
++ horizontal highlight reel. Top 10 verticals → Descript.
+
+**Edited mode** — pass `--edited` to `find_moments.py` ONLY when the user's
+initial prompt explicitly asks for it. Triggers include phrases like:
+"edited clips", "edited mode", "make shorts" (Cross Church shorthand for the
+polished/multi-segment cuts), "polished clips", "multi-segment", or
+"fluff cut". When no such trigger appears in the initial prompt, default
+mode is correct — do NOT prompt the user to choose, do NOT enable edited
+mode based on later messages, do NOT enable both.
+
+In edited mode: `find_moments.py` skips simple per-marker cuts and instead
+produces multi-segment `edited_*.mp4` files. The upload step auto-detects
+those edited verticals and uploads them to Descript (replacing the top-N
+simple-cut upload set).
+
 ---
 
 ## Pipeline Overview
@@ -38,11 +56,28 @@ Full pipeline: OBS recording → transcription → viral moment selection → ho
       │   (marker clips + full sermon)
       │
       ├── find_moments.py ──────────────────→ viral_clips/*.mp4
+      │   default mode:
       │   • 3-6 viral moments per marker clip       (45-70s each)
-      │   • 3-5 edited clips per marker clip        (multi-segment, fluff cut)
       │   • full sermon chunked into 4-min windows  (38+ additional clips)
       │   • horizontal highlight reel               (banger statements, 25-35s)
+      │   • → top 10 by virality_total uploaded to Descript
+      │   --edited mode (opt-in via initial prompt):
+      │   • 3-5 edited clips per marker clip        (multi-segment, fluff cut)
+      │   • full sermon clips still produced
+      │   • → all edited verticals uploaded to Descript
       │   → viral_clips/moments.json
+      │   → viral_clips/quotes.json   (deduped standalone text quotes)
+      │
+      ├── make_quote_images.py ─────────────→ quote_images/quote_NN.png
+      │   • 1080×1080 dark quote cards, one per quote in quotes.json
+      │   • simple/neutral style: serif quote text, decorative “ mark
+      │   • optional --attribution "Pastor Name"
+      │
+      ├── make_sermon_recap.py ─────────────→ sermon_recap/recap.mp4
+      │   • 8-12 min long-form recap of the full sermon (Furtick-style)
+      │   • One Claude call picks 5-10 structural segments (beginning/middle/end)
+      │   • Hard cuts only — no within-segment editing
+      │   • Horizontal 16:9 (no vertical conversion)
       │
       ├── make_vertical.py ─────────────────→ vertical_clips/*.mp4
       │   (face-tracked 9:16 crop, ranked by virality)
@@ -106,7 +141,11 @@ Note: ~5-6 min per 4-minute marker clip; ~10-15 min for a 36-min full sermon wit
 ### 4. Find viral moments and cut clips
 
 ```bash
+# default mode
 cd "$WORK_DIR" && python3 ~/.claude/skills/sermon-clips/scripts/find_moments.py
+
+# OR edited mode — only if the user explicitly asked in the initial prompt
+cd "$WORK_DIR" && python3 ~/.claude/skills/sermon-clips/scripts/find_moments.py --edited
 ```
 
 This:
@@ -116,6 +155,54 @@ This:
 - Saves to `viral_clips/` with a `moments.json` manifest
 
 Check `viral_clips/moments.json` to review titles and timings.
+
+In edited mode, simple per-marker cuts are skipped — `viral_clips/` contains
+only `edited_*.mp4` files plus full-sermon cuts.
+
+`find_moments.py` also asks Claude for 2-5 standalone QUOTES per transcript
+pass (independent of clip selection — pure text suitable for social quote
+cards). Quotes are deduped across marker clips + full sermon and written to
+`viral_clips/quotes.json`.
+
+### 4b. Render quote-card images
+
+```bash
+cd "$WORK_DIR" && python3 ~/.claude/skills/sermon-clips/scripts/make_quote_images.py
+
+# Or with attribution:
+python3 ~/.claude/skills/sermon-clips/scripts/make_quote_images.py --attribution "Pastor Name"
+```
+
+This:
+- Reads `viral_clips/quotes.json`
+- Renders each quote as a 1080×1080 PNG (dark bg, large serif quote text, dim
+  decorative quotation mark, optional attribution)
+- Saves to `quote_images/quote_NN.png` (+ a `.txt` next to each for caption copy)
+
+These are independent of the video pipeline — safe to run any time after
+`find_moments.py`. No Descript upload step; quote images are intended for
+direct posting to Instagram feed.
+
+### 4c. Build long-form sermon recap
+
+```bash
+cd "$WORK_DIR" && python3 ~/.claude/skills/sermon-clips/scripts/make_sermon_recap.py
+
+# Override target length:
+python3 ~/.claude/skills/sermon-clips/scripts/make_sermon_recap.py --target-minutes 11
+```
+
+Always run this step — it produces the 8-12 min Furtick-style long-form recap
+(the "meat and potatoes" of the sermon with a clear beginning, middle, end).
+
+This:
+- Finds the full sermon MP4 + its transcript
+- Asks Claude (one call) for 5-10 large structural segments (60-180s each,
+  total 8-12 min) that form a complete sermon arc
+- Cuts each segment with re-encode (so concat is clean), then stream-copy concats
+- Hard cuts only — no within-segment trimming. Pauses and natural pacing stay in.
+- Output: `sermon_recap/recap.mp4` + `sermon_recap/manifest.json`
+- Horizontal 16:9 only — not fed into `make_vertical.py`
 
 ### 5. Convert to vertical 9:16
 
@@ -131,17 +218,18 @@ This:
 - Re-encodes to H.264 CRF 18
 - Saves to `vertical_clips/`
 
-### 6. Upload top 10 verticals to Descript
+### 6. Upload verticals to Descript
 
 ```bash
 cd "$WORK_DIR" && python3 ~/.claude/skills/sermon-clips/scripts/upload_to_descript.py
 ```
 
 This:
-- Reads `viral_clips/moments.json`, picks the top 10 by `virality_total`
-- Matches each to `vertical_clips/<vertical_file>`
-- Creates **one new Descript project** named after the working directory
-  (e.g. "Sermon 0419") inside the **Cross Church** folder, with one composition per clip
+- Auto-detects edited mode: if `vertical_clips/edited_*_vertical.mp4` files
+  exist, uploads all of them. Otherwise picks the top 10 by `virality_total`
+  from `viral_clips/moments.json`.
+- Creates **one new Descript project per clip** inside the
+  **Cross Church** folder (e.g. "Sermon 0419 — 01. Demons Had Better Theology")
 - Uses the token at `~/.config/sermon-clips/descript.env`
   (set `DESCRIPT_API_TOKEN=dx_bearer_...:dx_secret_...`)
 

@@ -24,17 +24,31 @@ This repo is both:
       ├── transcribe.sh ─────────────────────→ transcripts/*.json
       │
       ├── find_moments.py ──────────────────→ viral_clips/*.mp4
+      │   default mode:
       │   • 3–6 viral moments per marker clip       (45–90s each)
-      │   • 3–5 edited clips per marker clip        (multi-segment, fluff cut)
       │   • full sermon chunked into 4-min windows  (38+ additional clips)
       │   • horizontal highlight reel               (banger statements, 25–35s)
+      │   --edited mode (opt-in):
+      │   • 3–5 edited clips per marker clip        (multi-segment, fluff cut)
+      │   • full sermon clips still produced
       │   → viral_clips/moments.json
+      │   → viral_clips/quotes.json   (deduped standalone text quotes)
+      │
+      ├── make_quote_images.py ─────────────→ quote_images/quote_NN.png
+      │   • 1080×1080 dark quote cards, one per quote in quotes.json
+      │   • optional --attribution "Pastor Name"
+      │
+      ├── make_sermon_recap.py ─────────────→ sermon_recap/recap.mp4
+      │   • 8–12 min long-form recap of the full sermon (Furtick-style)
+      │   • one Claude call picks 5–10 structural segments
+      │   • hard cuts only — pauses and natural pacing stay in
       │
       ├── make_vertical.py ─────────────────→ vertical_clips/*.mp4
       │   (face-tracked 9:16 crop, ranked by virality)
       │
       ├── upload_to_descript.py ───────────→ Descript ▸ Cross Church ▸ <Session>
-      │   • top N verticals, one project per clip
+      │   • default: top N verticals by virality
+      │   • --edited mode: auto-uploads all edited verticals instead
       │   • token: ~/.config/sermon-clips/descript.env
       │
       │   [Manual: review in Descript, copy keepers into edited_clips/]
@@ -160,6 +174,17 @@ bash /path/to/clips-skill/scripts/transcribe.sh
 
 # 3. Find viral moments → cut horizontal clips into viral_clips/
 python3 /path/to/clips-skill/scripts/find_moments.py
+#   add --edited for multi-segment "fluff cut" clips (skips simple per-marker
+#   cuts; the edited verticals become the Descript upload set in step 5)
+#   Also writes viral_clips/quotes.json (deduped standalone text quotes).
+
+# 3b. Render quote cards from quotes.json → quote_images/
+python3 /path/to/clips-skill/scripts/make_quote_images.py
+#   optional: --attribution "Pastor Name"
+
+# 3c. Build the long-form 8–12 min recap → sermon_recap/recap.mp4
+python3 /path/to/clips-skill/scripts/make_sermon_recap.py
+#   optional: --target-minutes 11
 
 # 4. Convert to vertical 9:16 (face-tracked crop) → vertical_clips/
 /usr/bin/python3 /path/to/clips-skill/scripts/make_vertical.py
@@ -177,8 +202,10 @@ python3 /path/to/clips-skill/scripts/finalize_clips.py
 
 | Script | Flags |
 |--------|-------|
-| `upload_to_descript.py` | `--top N`, `--all`, `--folder <name>`, `--session <name>`, `--skip N` (resume after partial failure), `--skip-poll` (don't wait for jobs), `--dry-run` |
-| `find_moments.py` | (no flags — runs over the whole `transcripts/` dir) |
+| `find_moments.py` | `--edited` — multi-segment edited clips (skips simple per-marker cuts) |
+| `make_quote_images.py` | `--attribution "Name"` — line under each quote |
+| `make_sermon_recap.py` | `--target-minutes N` — override default 10 min target |
+| `upload_to_descript.py` | `--top N`, `--all`, `--folder <name>`, `--session <name>`, `--skip N` (resume after partial failure), `--wait` (block on Descript processing; slow), `--dry-run`. Auto-detects edited mode from `vertical_clips/edited_*` files. |
 | `make_vertical.py` | Pass a single clip path to process just that file |
 
 ---
@@ -195,8 +222,14 @@ sermon_0503/
 │   └── *.json
 ├── viral_clips/                         # horizontal cuts
 │   ├── moments.json                     # virality scores + pick metadata
+│   ├── quotes.json                      # deduped standalone text quotes
 │   ├── *.mp4                            # ~45 clips (markers + full + edited)
 │   └── highlight_reel.mp4               # standalone banger statements
+├── quote_images/                        # 1080×1080 quote cards
+│   └── quote_NN.png + quote_NN.txt
+├── sermon_recap/                        # 8–12 min long-form recap
+│   ├── recap.mp4
+│   └── manifest.json
 ├── vertical_clips/                      # 9:16 face-tracked
 │   └── *_vertical.mp4
 ├── edited_clips/                        # YOU create this — keepers from Descript
@@ -281,9 +314,17 @@ the same frame. The clips will overlap; Claude will still find the best moments.
 now requires `team_access` when `folder_name` is set. The script already sends
 `"team_access": "edit"` — if you forked, make sure that field is present.
 
-**Descript upload looks hung** → The script polls each job for up to 30 min.
-If you killed it after a partial success, resume with
-`--skip N --skip-poll` where N is the number of clips that already finished.
+**Descript upload looks hung** → If the script is idling at 0% CPU with no
+network sockets, it's a macOS `_scproxy.get_proxies()` hang against
+`com.apple.netsrc`. The script installs an empty `ProxyHandler` at import
+time to bypass it. If you forked an old version, set `no_proxy='*'` in the
+environment as a workaround.
+
+**Upload taking 10 min per clip** → Old versions polled each Descript job
+until terminal status (which the job never reached). Polling is now opt-in
+via `--wait`; the default is fire-and-forget. The project URL is valid the
+moment the import POST returns — Descript finishes processing in the
+background. Resume a partial run with `--skip N`.
 
 **`h264_videotoolbox: Function not implemented`** → You're on Linux. Change the
 encoder in `finalize_clips.py` to `libx264 -crf 20 -preset medium`.
@@ -298,7 +339,9 @@ encoder in `finalize_clips.py` to `libx264 -crf 20 -preset medium`.
 | `scripts/extract_segments.py` | Cut 4-min windows around OBS chapter markers |
 | `scripts/transcribe.sh` | Whisper transcription for marker clips + full sermon |
 | `scripts/transcribe_faster.py` | faster-whisper helper invoked by `transcribe.sh` |
-| `scripts/find_moments.py` | Pick viral moments via Claude, cut horizontal clips |
+| `scripts/find_moments.py` | Pick viral moments + quotes via Claude, cut horizontal clips |
+| `scripts/make_quote_images.py` | Render 1080×1080 quote cards from `viral_clips/quotes.json` |
+| `scripts/make_sermon_recap.py` | Build the 8–12 min long-form recap of the full sermon |
 | `scripts/make_vertical.py` | OpenCV face-tracked 9:16 conversion |
 | `scripts/upload_to_descript.py` | Upload top N verticals to Descript |
 | `scripts/finalize_clips.py` | Add music + ending slate to curated clips |
