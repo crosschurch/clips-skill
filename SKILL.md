@@ -69,11 +69,12 @@ simple-cut upload set).
       │   → viral_clips/quotes.json   (deduped standalone text quotes)
       │
       ├── make_quote_images.py ─────────────→ quote_images/quote_NN.png
-      │   • 1080×1350 (Instagram 4:5) styled quote cards
-      │   • Six visual styles auto-picked per quote: grunge_accent,
-      │     vintage_press, editorial_wide, brand_block, scripture_card,
-      │     minimal_serif. find_moments.py tags each quote with a style
-      │     and (where relevant) a `punch` substring for accent rendering.
+      │   • 1080×1350 (Instagram 4:5) clean, editorial quote cards
+      │   • Six minimal styles auto-picked per quote (all sentence case,
+      │     generous whitespace, modest type — differ in palette/emphasis):
+      │     minimal_serif, soft_paper, editorial_split, accent_payoff,
+      │     brand_block, scripture_card. find_moments.py tags each quote
+      │     with style + (where relevant) a `punch` substring.
       │   • Bundled fonts (skill `fonts/` dir) — no install needed
       │   • Flags: --attribution, --style <name>, --all-styles
       │
@@ -178,14 +179,16 @@ python3 ~/.claude/skills/sermon-clips/scripts/make_quote_images.py --attribution
 ```
 
 This:
-- Reads `viral_clips/quotes.json` (new schema: each entry is
-  `{"text": "...", "style": "...", "punch": "..."}`; bare strings still
-  accepted for backward compatibility — heuristic picks a style)
+- Reads `viral_clips/quotes.json` (each entry is `{"text": "...", "style":
+  "...", "punch": "..."}`; bare strings still accepted — heuristic picks a
+  style. Legacy style names from earlier versions are auto-remapped.)
 - Renders each quote as a 1080×1350 PNG (Instagram 4:5 portrait) in one of
-  six visual styles: `grunge_accent` (urgent / call-to-action), `vintage_press`
-  (paradox / reframe wisdom), `editorial_wide` (sermonic build-to-payoff),
-  `brand_block` (bold identity statement on flat navy), `scripture_card`
-  (contemplative italic serif on warm gradient), `minimal_serif` (fallback)
+  six minimal styles — all sentence case, generous whitespace, modest type:
+  `minimal_serif` (dark + Lora — default), `soft_paper` (cream + one italic
+  emphasis word — paradox/wisdom), `editorial_split` (charcoal + dim setup →
+  bright payoff), `accent_payoff` (dark + italic warm-gold payoff —
+  declarative), `brand_block` (deep navy, centered & calm — identity),
+  `scripture_card` (soft gradient + italic — scripture/prayer)
 - Saves to `quote_images/quote_NN.png` (+ a `.txt` next to each for caption copy)
 
 Flags:

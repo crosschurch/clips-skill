@@ -85,18 +85,18 @@ QUOTE DUMP — separately, identify 2-5 standalone QUOTES from this transcript s
 - Prefer convicting one-liners, reframes, paradoxes, or sticky truth statements over narrative beats
 - Quotes can come from the same content as a moment — they are independent of clip selection
 
-QUOTE STYLE — for each quote, pick the visual style whose energy matches the quote:
-- grunge_accent  → urgent, declarative, call-to-action ("Stop X. Start Y."). Punchy and confrontational
-- vintage_press  → reframe / paradox / "X is God's Y" wisdom. Reflective, sticky
-- editorial_wide → multi-sentence sermonic build with a clear setup→payoff arc ("X if Y", "X but Y")
-- brand_block    → bold identity statement, one or two short sentences, exclamatory
-- scripture_card → scripture, prayer-language, contemplative, sacred-feeling
-- minimal_serif  → literary, poetic, lyrical — use sparingly when nothing else fits
+QUOTE STYLE — for each quote, pick the visual style whose energy matches the quote. All styles are clean and minimal (sentence case, generous whitespace, modest type) — they differ in palette and emphasis mechanic, not loudness:
+- accent_payoff   → declarative / call-to-action ("Stop X. Reach for Y."). Sans setup → italic warm-gold payoff on dark
+- soft_paper      → reframe / paradox / "X is God's Y" wisdom. Cream paper, single emphasis word italicized in-line
+- editorial_split → setup→payoff sermonic build ("X if Y", "X but Y", multi-sentence). Charcoal bg, dim setup → bright payoff
+- brand_block     → calm identity statement, one or two short sentences. Deep navy bg, sentence case, centered
+- scripture_card  → scripture, prayer-language, contemplative, sacred-feeling. Subtle gradient, italic serif
+- minimal_serif   → literary, poetic, anything that doesn't fit the others. Dark bg, serif, the safe default
 
-QUOTE PUNCH — for grunge_accent / vintage_press / editorial_wide, also pick a "punch":
-- grunge_accent  → the climactic clause (the second beat of the quote — what the script accent will say)
-- vintage_press  → a SINGLE word (the most charged noun in the quote). After removing this word, the rest must still read as a grammatical phrase
-- editorial_wide → the final clause / payoff after the setup
+QUOTE PUNCH — for accent_payoff / soft_paper / editorial_split, also pick a "punch":
+- accent_payoff   → the final clause / payoff after the setup (becomes the italic gold line)
+- soft_paper      → a SINGLE word (the most charged noun in the quote). After removing this word in your head, the rest must still read as a grammatical phrase
+- editorial_split → the final clause / payoff after the setup (becomes the bright line under the dim setup)
 - For brand_block, scripture_card, minimal_serif: omit "punch" (set to null or "")
 The punch MUST be a verbatim substring of the quote text — do not rephrase
 
@@ -122,7 +122,7 @@ Return ONLY valid JSON (no markdown, no explanation). Sort moments by total vira
   "quotes": [
     {{
       "text": "<punchy standalone quote, 1-3 sentences, lightly cleaned for readability>",
-      "style": "<grunge_accent|vintage_press|editorial_wide|brand_block|scripture_card|minimal_serif>",
+      "style": "<accent_payoff|soft_paper|editorial_split|brand_block|scripture_card|minimal_serif>",
       "punch": "<verbatim substring of text — see QUOTE PUNCH rules above; omit or empty for brand_block/scripture_card/minimal_serif>"
     }}
   ]
@@ -520,8 +520,14 @@ def marker_abs_start(stem):
 
 
 VALID_QUOTE_STYLES = {
-    "grunge_accent", "vintage_press", "editorial_wide",
+    "accent_payoff", "soft_paper", "editorial_split",
     "brand_block", "scripture_card", "minimal_serif",
+}
+# Old style names still accepted (renderer remaps them too).
+LEGACY_QUOTE_STYLE_MAP = {
+    "grunge_accent":  "accent_payoff",
+    "vintage_press":  "soft_paper",
+    "editorial_wide": "editorial_split",
 }
 
 
@@ -536,6 +542,7 @@ def _quote_to_dict(q):
             return None
         d = {"text": t}
         style = (q.get("style") or "").strip()
+        style = LEGACY_QUOTE_STYLE_MAP.get(style, style)
         if style in VALID_QUOTE_STYLES:
             d["style"] = style
         punch = (q.get("punch") or "").strip()

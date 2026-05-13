@@ -35,14 +35,21 @@ This repo is both:
       │   → viral_clips/quotes.json   (deduped standalone text quotes)
       │
       ├── make_quote_images.py ─────────────→ quote_images/quote_NN.png
-      │   • 1080×1350 (Instagram 4:5) styled quote cards, one per quote
-      │   • Six visual styles dispatched per-quote: grunge_accent,
-      │     vintage_press, editorial_wide, brand_block, scripture_card,
-      │     minimal_serif. Claude tags each quote in quotes.json with
-      │     the style that fits its tone; a heuristic fills in any gap.
+      │   • 1080×1350 (Instagram 4:5) minimal, editorial quote cards
+      │   • Six clean styles auto-picked per quote — all are sentence case
+      │     with generous whitespace and modest type. They differ in palette
+      │     and emphasis mechanic, not loudness:
+      │       minimal_serif   — dark + Lora regular (default literary)
+      │       soft_paper      — cream paper + Lora regular w/ one italic
+      │                         emphasis word in-line (paradox / wisdom)
+      │       editorial_split — charcoal + Inter, dim setup → bright payoff
+      │       accent_payoff   — dark + Inter setup + italic warm-gold payoff
+      │       brand_block     — deep navy + Inter regular, centered & calm
+      │       scripture_card  — soft gradient + Lora italic, contemplative
+      │   • find_moments.py tags each quote with {text, style, punch}; bare
+      │     strings still accepted (heuristic style picker fills the gap)
       │   • Bundled fonts from skill `fonts/` dir — no install required
-      │   • optional --attribution "Pastor Name", --style <name> (force a
-      │     single style), --all-styles (render every quote in every style)
+      │   • Flags: --attribution "Pastor Name", --style <name>, --all-styles
       │
       ├── make_sermon_recap.py ─────────────→ sermon_recap/recap.mp4
       │   • 8–12 min long-form recap of the full sermon (Furtick-style)
