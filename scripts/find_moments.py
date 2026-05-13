@@ -49,10 +49,18 @@ GROUNDING RULES (follow strictly):
 THOUGHT-COMPLETENESS RULES (the most important rules — read carefully):
 A clip is not a sentence range, it is a complete self-contained THOUGHT. A thought is the full idea the speaker is developing — setup, point, payoff. The clip must be the entire thought and *only* that thought.
 
-- start: the speaker is BEGINNING a new idea. The line before the start must be a clean break — a transition phrase, the end of a different thought, or a natural pivot. Never start mid-explanation.
-- end: the speaker has just FINISHED making the point. The line *after* your chosen end must be the start of a different idea (a new topic, a transition, "and so", "but here's the thing", a new analogy, a new scripture). If the next line is still developing the same thought (e.g. continues a list, gives the next beat of a story, finishes a sentence the speaker started), your end is too early — extend it or pick a different boundary.
-- A ~6 second buffer of footage will be added on each side as editing headroom. The editor will trim it down in post. Your picked timestamps must be the true thought boundaries, not adjusted for the buffer — the buffer is intentional spillover, not a fudge factor.
-- Verify before finalizing: re-read the line at end+1 to end+3 in the transcript. Ask "is this the start of a different idea, or the speaker continuing what came before?" If it's a continuation, your end is wrong — extend until the thought truly resolves.
+LENGTH POLICY:
+- Target 45–90s as the sweet spot. You MAY go up to 180s (3 min) when needed to land a complete thought. Hard cap: 180s.
+- ALWAYS prefer a slightly long clip that fully resolves the thought over a "snappy" clip that cuts off mid-idea. A clip that ends mid-thought is a failure no matter how short and punchy it would have been. Err on the side of too long, not too short.
+
+START:
+- the speaker is BEGINNING a new idea. The line before the start must be a clean break — a transition phrase, the end of a different thought, or a natural pivot. Never start mid-explanation.
+
+END (this is where most failures come from — read twice):
+- the speaker has just FINISHED making the point. The line *after* your chosen end must be the start of a different idea (new topic, transition, "and so", "but here's the thing", new analogy, new scripture). If the next line is still developing the same thought (continues a list, gives the next beat of a story, finishes a sentence the speaker started), your end is too early — extend it.
+- THE PAUSE TEST (mandatory): the gap between your chosen end timestamp and the next transcript segment's start timestamp MUST be ≥ 2.0 seconds. If the next segment begins less than 2s after your end, the speaker is still mid-flow on the same beat and you are cutting mid-thought. Find a later end where there is a real ≥2s pause in the transcript.
+- Verify before finalizing: look at the timestamps of the segments at and after your chosen end. Is there a gap of at least 2.0 seconds before the next segment begins? If not, your end is wrong — push it forward to the next real pause.
+- A ~6 second buffer of footage will be added on each side as editing headroom. The editor will trim it down in post. Your picked timestamps must be the true thought boundaries (and the ≥2s pause point), not adjusted for the buffer — the buffer is intentional spillover, not a fudge factor.
 
 CLIP INFO:
 Name: {clip_name}
@@ -62,8 +70,9 @@ TIMESTAMPED TRANSCRIPT:
 {transcript}
 
 Find the best 3-6 moments. Each clip must:
-- Be 45-90 seconds long (strictly — reject under 40s or over 95s). Err longer when needed to fully resolve the thought; the editor will trim down in post.
+- Be 45-180 seconds long. Sweet spot is 45-90s but you may run up to 180s when needed to land a complete thought. Hard reject under 40s or over 200s.
 - Be ONE complete self-contained thought — see the THOUGHT-COMPLETENESS RULES above. The clip must contain the entire idea (setup → point → payoff) and nothing from the next idea
+- End at a real pause: the gap between your chosen end and the next transcript segment MUST be ≥ 2.0 seconds (see the PAUSE TEST in the rules above)
 - The line right after your end timestamp must be the start of a DIFFERENT idea, not a continuation of the current one
 - Open with a strong hook: question, bold claim, or story start
 - Carry one clear emotional arc (conviction→hope, pain→relief, confusion→clarity)
@@ -135,12 +144,22 @@ Return ONLY valid JSON (no markdown, no explanation). Sort moments by total vira
 
 
 def format_transcript(segments):
+    """Format transcript with explicit pause markers between segments.
+
+    Whenever the gap between one segment's end and the next segment's start
+    exceeds 1.5s, insert a "[pause: 2.4s]" line so Claude can mechanically
+    spot the ≥2s pauses required by the PAUSE TEST in the prompt.
+    """
     lines = []
-    for seg in segments:
+    for i, seg in enumerate(segments):
         s, e = seg["start"], seg["end"]
         m_s = f"{int(s//60)}:{int(s%60):02d}"
         m_e = f"{int(e//60)}:{int(e%60):02d}"
         lines.append(f"[{m_s}–{m_e}] {seg['text'].strip()}")
+        if i + 1 < len(segments):
+            gap = segments[i + 1]["start"] - e
+            if gap > 1.5:
+                lines.append(f"        [pause: {gap:.1f}s]")
     return "\n".join(lines)
 
 
@@ -452,7 +471,7 @@ def process_full_sermon(video_path, transcript_path, clips_dir):
             title = m.get('title', f'Moment {i+1}')
             dur = rel_end - rel_start
 
-            if dur < 35 or dur > 80:
+            if dur < 35 or dur > 195:
                 print(f"    ⚠ Skip '{title}' — {dur:.0f}s out of range")
                 continue
             if rel_start < 0 or rel_end > chunk_dur + 10:
@@ -682,7 +701,7 @@ def main():
             dur = end - start
 
             # Guard rails
-            if dur < 35 or dur > 80:
+            if dur < 35 or dur > 195:
                 print(f"  ⚠ Skip '{title}' — {dur:.0f}s out of range")
                 continue
             if start < 0 or end > duration + 10:

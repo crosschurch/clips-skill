@@ -74,13 +74,13 @@ PRESETS = {
     ),
     "minimal": dict(
         font="Inter",
-        size=64,
-        chunk=6,
+        size=68,
+        chunk=5,
         highlight=None,
         outline=4,
         shadow=1,
-        margin_v=160,
-        alignment=2,
+        margin_v=0,            # ignored when alignment is middle (4-6)
+        alignment=5,           # middle-center (vertically + horizontally centered)
     ),
 }
 
@@ -267,7 +267,7 @@ def _in_dir(d):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("inputs", nargs="*", help="work_dir, directory, or specific .mp4 files")
-    ap.add_argument("--style", default="opus", choices=list(PRESETS.keys()))
+    ap.add_argument("--style", default="minimal", choices=list(PRESETS.keys()))
     ap.add_argument("--model", default="base.en",
                     help="Whisper model for caption transcription (tiny.en, base.en, small.en)")
     ap.add_argument("--out-dir", default="captioned_clips",
