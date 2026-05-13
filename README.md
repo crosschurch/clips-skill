@@ -59,6 +59,14 @@ This repo is both:
       ├── make_vertical.py ─────────────────→ vertical_clips/*.mp4
       │   (face-tracked 9:16 crop, ranked by virality)
       │
+      ├── sync_transcript.py (optional) ───→ transcripts/<stem>.md  + prod DB
+      │   • Converts Whisper JSON → Defuddle markdown (`**MM:SS** · text`)
+      │   • Optional `--push` updates the matching prod Episode row in
+      │     the crosschurch-new MySQL DB (auto-finds the latest episode
+      │     needing a timestamped transcript via title fuzzy match)
+      │   • Use when YouTube captions aren't available yet so the
+      │     /sync-church-episode skill can't fetch from Defuddle
+      │
       ├── add_captions.py (optional) ──────→ captioned_clips/*_captioned.mp4
       │   • burns opus-style word-by-word captions onto verticals
       │   • re-transcribes each clip with whisper (base.en by default) so
@@ -233,6 +241,7 @@ python3 /path/to/clips-skill/scripts/finalize_clips.py
 | `make_quote_images.py` | `--attribution "Name"`, `--style <name>` (force one style for every quote), `--all-styles` (render each quote in every style) |
 | `make_sermon_recap.py` | `--target-minutes N` — override default 10 min target |
 | `add_captions.py` | `--style opus|karaoke|minimal`, `--model tiny.en|base.en|small.en`, `--out-dir <name>`, `--inplace` (overwrite verticals), or pass specific .mp4 paths to caption just those |
+| `sync_transcript.py` | `--push` (commit to prod, default is dry-run), `--episode-id N`, `--title "..."`, `--no-confirm`, `--stdout`. Set `$CROSSCHURCH_DIR` if the Laravel repo isn't at `~/Code/crosschurch-new`. |
 | `upload_to_descript.py` | `--top N`, `--all`, `--folder <name>`, `--session <name>`, `--skip N` (resume after partial failure), `--wait` (block on Descript processing; slow), `--dry-run`. Auto-detects edited mode from `vertical_clips/edited_*` files. |
 | `make_vertical.py` | Pass a single clip path to process just that file |
 
@@ -372,6 +381,7 @@ encoder in `finalize_clips.py` to `libx264 -crf 20 -preset medium`.
 | `scripts/find_moments.py` | Pick viral moments + quotes via Claude, cut horizontal clips |
 | `scripts/make_quote_images.py` | Render 1080×1350 styled quote cards from `viral_clips/quotes.json` (six styles, auto-picked per quote) |
 | `scripts/add_captions.py` | Burn opus-style word-by-word captions onto vertical clips (adapted from `clipify`'s build_ass.py — MIT) |
+| `scripts/sync_transcript.py` | Convert Whisper JSON → Defuddle markdown; optional push to the matching prod Episode in `~/Code/crosschurch-new` MySQL |
 | `fonts/` | Bundled Google Fonts (Anton, Bebas Neue, Inter, Lora, Permanent Marker, Yellowtail, Alfa Slab One) used by the quote-card styles |
 | `style_refs/` | Reference PNGs that inspired the quote-card styles (committed for design intent — not consumed at runtime) |
 | `scripts/make_sermon_recap.py` | Build the 8–12 min long-form recap of the full sermon |

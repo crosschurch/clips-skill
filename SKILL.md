@@ -84,6 +84,15 @@ simple-cut upload set).
       │   • Hard cuts only — no within-segment editing
       │   • Horizontal 16:9 (no vertical conversion)
       │
+      ├── sync_transcript.py (optional) ───→ transcripts/<stem>.md   + prod DB
+      │   • Converts the Whisper JSON to Defuddle-format markdown
+      │     (`**MM:SS** · text` per line)
+      │   • Optionally pushes straight to the prod Episode row in the
+      │     crosschurch-new MySQL DB (latest episode needing a
+      │     timestamped transcript; matched by title fuzzy match).
+      │   • Stand-in for /sync-church-episode when Defuddle can't fetch
+      │     YouTube captions yet (unlisted upload, fresh episode, etc.)
+      │
       ├── make_vertical.py ─────────────────→ vertical_clips/*.mp4
       │   (face-tracked 9:16 crop, ranked by virality)
       │
@@ -226,6 +235,36 @@ This:
 - Hard cuts only — no within-segment trimming. Pauses and natural pacing stay in.
 - Output: `sermon_recap/recap.mp4` + `sermon_recap/manifest.json`
 - Horizontal 16:9 only — not fed into `make_vertical.py`
+
+### 4d. (Optional) Sync the local transcript to prod
+
+Run this step ONLY when the user explicitly asks for it ("sync transcript",
+"push transcript to prod", "transcribe the episode", or when they mention
+Defuddle hasn't returned captions yet). Don't run it proactively — it
+writes to the production database.
+
+```bash
+# Preview (dry run, default — writes the .md but does NOT touch the DB)
+cd "$WORK_DIR" && python3 ~/.claude/skills/sermon-clips/scripts/sync_transcript.py
+
+# Push the local Whisper transcript to the matching prod episode
+cd "$WORK_DIR" && python3 ~/.claude/skills/sermon-clips/scripts/sync_transcript.py --push
+```
+
+This:
+- Reads the full-sermon Whisper JSON from `transcripts/`
+- Converts to Defuddle-format markdown (`**MM:SS** · text` per segment)
+- Writes `transcripts/<stem>.md`
+- (`--push`) Connects to the prod MySQL DB via `php artisan tinker` in
+  `~/Code/crosschurch-new` (or `$CROSSCHURCH_DIR`)
+- Finds the latest episode whose title fuzzy-matches the sermon's file
+  stem AND has no timestamped transcript yet
+- Confirms before writing (skip with `--no-confirm`)
+
+Use this when the YouTube video's captions haven't generated yet, so
+`/sync-church-episode` would otherwise be blocked on Defuddle.
+
+Flags: `--episode-id N`, `--title "..."`, `--no-confirm`, `--stdout`.
 
 ### 5. Convert to vertical 9:16
 
