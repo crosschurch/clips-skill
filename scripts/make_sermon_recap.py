@@ -96,34 +96,50 @@ Return ONLY valid JSON (no markdown, no explanation):
 }}"""
 
 
-def render_thumbnail(quote_text, out_path):
-    """Render a minimal 1280×720 YouTube thumbnail with a centered quote.
+THUMB_BADGE = "SERMON RECAP"
 
-    Style intentionally matches `minimal_serif` quote-card aesthetic:
-    dark bg, Inter Regular, generous whitespace, no ornaments. The
-    thumbnail reads cleanly in a YouTube grid where it competes with
-    photo-heavy thumbnails by being the calm one.
+
+def render_thumbnail(quote_text, out_path, badge=THUMB_BADGE):
+    """Render a 1280×720 YouTube thumbnail in recap-card style.
+
+    Distinct from full-sermon thumbnails: pure black bg, ANTON condensed
+    caps in white for the quote, with a small "SERMON RECAP" badge in
+    the bottom-left so viewers grid-scanning the channel recognize this
+    as a different format. Designed to stand apart from photo-heavy
+    full-sermon thumbnails by being deliberately text-forward.
     """
     try:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:
         return False
 
-    bg = (14, 14, 16)
-    fg = (237, 233, 223)
-    font_path = os.path.join(FONT_DIR, "Inter-Regular.ttf")
-    if not os.path.exists(font_path):
+    bg = (0, 0, 0)
+    fg = (255, 255, 255)
+    badge_fg = (215, 215, 215)
+    quote_font_path = os.path.join(FONT_DIR, "Anton-Regular.ttf")
+    badge_font_path = os.path.join(FONT_DIR, "Inter-Bold.ttf")
+    fallback_font_path = os.path.join(FONT_DIR, "Inter-Regular.ttf")
+    if not os.path.exists(quote_font_path):
+        quote_font_path = fallback_font_path  # graceful fallback
+    if not os.path.exists(badge_font_path):
+        badge_font_path = fallback_font_path
+    if not os.path.exists(quote_font_path):
         return False
 
     img = Image.new("RGB", (THUMB_W, THUMB_H), bg)
     draw = ImageDraw.Draw(img)
 
-    pad_x = 140
-    pad_y = 120
+    # Reserve space at the bottom for the badge
+    badge_zone_h = 100 if badge else 0
+    pad_x = 120
+    pad_y_top = 100
+    pad_y_bot = pad_y_top + badge_zone_h
     max_w = THUMB_W - 2 * pad_x
-    max_h = THUMB_H - 2 * pad_y
+    max_h = THUMB_H - pad_y_top - pad_y_bot
 
-    # Binary-search the largest font size that fits the box
+    quote_caps = quote_text.upper()
+
+    # Binary-search the largest Anton size that fits the quote
     def wrap(text, font_obj):
         words = text.split()
         if not words:
@@ -140,14 +156,14 @@ def render_thumbnail(quote_text, out_path):
             lines.append(cur)
         return lines
 
-    lo, hi = 36, 120
+    lo, hi = 60, 220
     best = None
     while lo <= hi:
         mid = (lo + hi) // 2
-        f = ImageFont.truetype(font_path, mid)
-        lines = wrap(quote_text, f)
+        f = ImageFont.truetype(quote_font_path, mid)
+        lines = wrap(quote_caps, f)
         ascent, descent = f.getmetrics()
-        line_h = int((ascent + descent) * 1.25)
+        line_h = int((ascent + descent) * 1.05)   # Anton is tall — tight leading
         total_h = line_h * len(lines)
         widest = max((draw.textbbox((0, 0), ln, font=f)[2] for ln in lines), default=0)
         if total_h <= max_h and widest <= max_w:
@@ -156,15 +172,19 @@ def render_thumbnail(quote_text, out_path):
         else:
             hi = mid - 1
     if best is None:
-        f = ImageFont.truetype(font_path, 36)
-        lines = wrap(quote_text, f)
+        f = ImageFont.truetype(quote_font_path, 60)
+        lines = wrap(quote_caps, f)
         ascent, descent = f.getmetrics()
-        line_h = int((ascent + descent) * 1.25)
+        line_h = int((ascent + descent) * 1.05)
         best = (f, lines, line_h)
 
     font_obj, lines, line_h = best
     total_h = line_h * len(lines)
-    y = (THUMB_H - total_h) // 2
+
+    # Vertically center the quote within the available (non-badge) area
+    avail_top = pad_y_top
+    avail_bot = THUMB_H - pad_y_bot
+    y = avail_top + ((avail_bot - avail_top) - total_h) // 2
 
     for ln in lines:
         bbox = draw.textbbox((0, 0), ln, font=font_obj)
@@ -172,6 +192,22 @@ def render_thumbnail(quote_text, out_path):
         x = (THUMB_W - w) // 2
         draw.text((x, y), ln, font=font_obj, fill=fg)
         y += line_h
+
+    # Bottom-left badge: small condensed rule + label
+    if badge:
+        badge_text = badge.upper()
+        badge_font = ImageFont.truetype(badge_font_path, 22)
+        badge_x = 80
+        badge_y = THUMB_H - 70
+        # Small horizontal rule above the badge text
+        draw.line([(badge_x, badge_y - 14), (badge_x + 48, badge_y - 14)],
+                  fill=badge_fg, width=2)
+        # Tracked letters for a stamp feel
+        x = badge_x
+        for ch in badge_text:
+            draw.text((x, badge_y), ch, font=badge_font, fill=badge_fg)
+            w = draw.textbbox((0, 0), ch, font=badge_font)[2]
+            x += w + 3  # tracking
 
     img.save(out_path, "JPEG", quality=92, optimize=True)
     return True
