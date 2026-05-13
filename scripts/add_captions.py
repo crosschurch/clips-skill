@@ -74,11 +74,11 @@ PRESETS = {
     ),
     "minimal": dict(
         font="Inter",
-        size=68,
-        chunk=5,
+        size=104,              # one-word-at-a-time → bigger so each word lands
+        chunk=1,               # one word per dialogue event — single-word captions
         highlight=None,
-        outline=4,
-        shadow=1,
+        outline=6,
+        shadow=2,
         margin_v=0,            # ignored when alignment is middle (4-6)
         alignment=5,           # middle-center (vertically + horizontally centered)
     ),

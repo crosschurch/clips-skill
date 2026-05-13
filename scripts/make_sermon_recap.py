@@ -28,6 +28,13 @@ import tempfile
 # cuts and the final fade-and-concat encode. No-op off-darwin.
 HW_ACCEL = ["-hwaccel", "videotoolbox"] if sys.platform == "darwin" else []
 
+SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FONT_DIR = os.path.join(SKILL_ROOT, "fonts")
+
+# YouTube thumbnail canvas — 16:9 at 1280×720 (YouTube's recommended size)
+THUMB_W = 1280
+THUMB_H = 720
+
 DEFAULT_TARGET_MIN = 10
 TARGET_MIN_FLOOR = 8       # minimum total recap length
 TARGET_MIN_CEILING = 12    # maximum total recap length
@@ -61,10 +68,23 @@ CONTENT RULES:
 TRANSCRIPT (full sermon, with [mm:ss–mm:ss] markers):
 {transcript}
 
+YOUTUBE TITLE (this is the click signal — get it right):
+- Write the title in the style of Steven Furtick / Elevation Church recap uploads. Short, hook-driven, conversational. Imperative, question, or declaration — not a sermon-series name.
+- 4-9 words. Title Case. No punctuation at the end (no period). Avoid clickbait — emotionally resonant, not manipulative.
+- Examples of the right voice: "When God Says No", "Stop Trying To Be God", "You Have More Authority Than You Think", "Why You're Stuck", "The God Who Sees You", "Don't Quit On Day 3", "What She Reached For"
+- It must connect to THIS sermon specifically (not generic). Read the transcript and pick a hook the sermon actually pays off.
+
+THUMBNAIL QUOTE (renders as the YouTube thumbnail's main text):
+- One short sentence or fragment lifted from the sermon. Verbatim or near-verbatim from the transcript — light cleaning of fillers OK, no paraphrase.
+- Max 60 characters. Shorter is better — fewer than 8 words ideal. The thumbnail is read in a thumbnail-grid context, so it needs to land instantly.
+- Must be a complete standalone thought (doesn't need surrounding context to make sense).
+- Should land with the same energy as the title — pick the line that, on its own, makes someone click.
+
 Return ONLY valid JSON (no markdown, no explanation):
 {{
-  "title": "<recap title, under 60 chars>",
-  "summary": "<one or two sentences describing the sermon's spine>",
+  "title": "<YouTube title in Furtick/Elevation style, 4-9 words, Title Case, no trailing punctuation>",
+  "thumbnail_quote": "<short verbatim quote for the thumbnail, ≤60 chars>",
+  "summary": "<one or two sentences describing the sermon's spine — for the manifest, not for posting>",
   "segments": [
     {{
       "start": <seconds as number>,
@@ -74,6 +94,87 @@ Return ONLY valid JSON (no markdown, no explanation):
     }}
   ]
 }}"""
+
+
+def render_thumbnail(quote_text, out_path):
+    """Render a minimal 1280×720 YouTube thumbnail with a centered quote.
+
+    Style intentionally matches `minimal_serif` quote-card aesthetic:
+    dark bg, Inter Regular, generous whitespace, no ornaments. The
+    thumbnail reads cleanly in a YouTube grid where it competes with
+    photo-heavy thumbnails by being the calm one.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return False
+
+    bg = (14, 14, 16)
+    fg = (237, 233, 223)
+    font_path = os.path.join(FONT_DIR, "Inter-Regular.ttf")
+    if not os.path.exists(font_path):
+        return False
+
+    img = Image.new("RGB", (THUMB_W, THUMB_H), bg)
+    draw = ImageDraw.Draw(img)
+
+    pad_x = 140
+    pad_y = 120
+    max_w = THUMB_W - 2 * pad_x
+    max_h = THUMB_H - 2 * pad_y
+
+    # Binary-search the largest font size that fits the box
+    def wrap(text, font_obj):
+        words = text.split()
+        if not words:
+            return []
+        lines, cur = [], ""
+        for w in words:
+            trial = (cur + " " + w).strip()
+            if draw.textbbox((0, 0), trial, font=font_obj)[2] <= max_w or not cur:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = w
+        if cur:
+            lines.append(cur)
+        return lines
+
+    lo, hi = 36, 120
+    best = None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        f = ImageFont.truetype(font_path, mid)
+        lines = wrap(quote_text, f)
+        ascent, descent = f.getmetrics()
+        line_h = int((ascent + descent) * 1.25)
+        total_h = line_h * len(lines)
+        widest = max((draw.textbbox((0, 0), ln, font=f)[2] for ln in lines), default=0)
+        if total_h <= max_h and widest <= max_w:
+            best = (f, lines, line_h)
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    if best is None:
+        f = ImageFont.truetype(font_path, 36)
+        lines = wrap(quote_text, f)
+        ascent, descent = f.getmetrics()
+        line_h = int((ascent + descent) * 1.25)
+        best = (f, lines, line_h)
+
+    font_obj, lines, line_h = best
+    total_h = line_h * len(lines)
+    y = (THUMB_H - total_h) // 2
+
+    for ln in lines:
+        bbox = draw.textbbox((0, 0), ln, font=font_obj)
+        w = bbox[2] - bbox[0]
+        x = (THUMB_W - w) // 2
+        draw.text((x, y), ln, font=font_obj, fill=fg)
+        y += line_h
+
+    img.save(out_path, "JPEG", quality=92, optimize=True)
+    return True
 
 
 def format_transcript(segments):
@@ -245,6 +346,12 @@ def main():
             except ValueError:
                 pass
 
+    # --meta-only re-asks Claude for title + thumbnail_quote (and segments, but
+    # they're discarded) and just refreshes manifest.json, title.txt, and
+    # thumbnail.jpg without re-cutting the recap. Useful for re-rolling the
+    # title/thumbnail after the recap already exists.
+    meta_only = "--meta-only" in sys.argv
+
     target_sec = int(target_min * 60)
     target_floor_sec = TARGET_MIN_FLOOR * 60
     target_ceiling_sec = TARGET_MIN_CEILING * 60
@@ -290,6 +397,39 @@ def main():
         print("✗ No usable recap plan returned")
         sys.exit(1)
 
+    # Meta-only path — refresh title + thumbnail without re-cutting video
+    if meta_only:
+        out_dir = os.path.join(work_dir, "sermon_recap")
+        os.makedirs(out_dir, exist_ok=True)
+        title = (plan.get("title") or "").strip()
+        thumb_quote = (plan.get("thumbnail_quote") or "").strip()
+
+        manifest_path = os.path.join(out_dir, "manifest.json")
+        manifest = {}
+        if os.path.exists(manifest_path):
+            try:
+                with open(manifest_path) as f:
+                    manifest = json.load(f)
+            except json.JSONDecodeError:
+                manifest = {}
+        manifest["title"] = title
+        manifest["thumbnail_quote"] = thumb_quote
+        manifest["summary"] = plan.get("summary", manifest.get("summary", ""))
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+
+        if title:
+            with open(os.path.join(out_dir, "title.txt"), "w") as f:
+                f.write(title + "\n")
+
+        thumb_path = os.path.join(out_dir, "thumbnail.jpg")
+        if thumb_quote and render_thumbnail(thumb_quote, thumb_path):
+            print(f"✓ thumbnail   →  {thumb_path}")
+        print(f"✓ manifest    →  {manifest_path}")
+        print(f"  Title : {title}")
+        print(f"  Thumb : “{thumb_quote}”")
+        return
+
     cleaned, warnings = validate_segments(
         plan["segments"], video_duration, target_floor_sec, target_ceiling_sec,
     )
@@ -333,9 +473,13 @@ def main():
     if not concat_segments(seg_files, recap_path, total):
         sys.exit(1)
 
+    title = (plan.get("title") or "").strip()
+    thumb_quote = (plan.get("thumbnail_quote") or "").strip()
+
     manifest = {
         "source": os.path.basename(video),
-        "title": plan.get("title", ""),
+        "title": title,
+        "thumbnail_quote": thumb_quote,
         "summary": plan.get("summary", ""),
         "target_minutes": target_min,
         "total_seconds": total,
@@ -345,9 +489,27 @@ def main():
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
 
+    # Convenience: title.txt next to manifest, so anyone scripting against
+    # this output doesn't have to parse JSON.
+    if title:
+        with open(os.path.join(out_dir, "title.txt"), "w") as f:
+            f.write(title + "\n")
+
+    # Render thumbnail.jpg if we have a quote to display
+    thumb_path = os.path.join(out_dir, "thumbnail.jpg")
+    if thumb_quote:
+        if render_thumbnail(thumb_quote, thumb_path):
+            print(f"✓ thumbnail   →  {thumb_path}")
+        else:
+            print(f"⚠ thumbnail render failed (PIL not installed?)")
+
     size_mb = os.path.getsize(recap_path) / 1_000_000
     print(f"\n✓ recap.mp4  ({total:.0f}s, {size_mb:.1f} MB)  →  {recap_path}")
     print(f"✓ manifest    →  {manifest_path}")
+    if title:
+        print(f"  Title : {title}")
+    if thumb_quote:
+        print(f"  Thumb : “{thumb_quote}”")
 
 
 if __name__ == "__main__":
