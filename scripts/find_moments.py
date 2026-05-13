@@ -85,6 +85,21 @@ QUOTE DUMP — separately, identify 2-5 standalone QUOTES from this transcript s
 - Prefer convicting one-liners, reframes, paradoxes, or sticky truth statements over narrative beats
 - Quotes can come from the same content as a moment — they are independent of clip selection
 
+QUOTE STYLE — for each quote, pick the visual style whose energy matches the quote:
+- grunge_accent  → urgent, declarative, call-to-action ("Stop X. Start Y."). Punchy and confrontational
+- vintage_press  → reframe / paradox / "X is God's Y" wisdom. Reflective, sticky
+- editorial_wide → multi-sentence sermonic build with a clear setup→payoff arc ("X if Y", "X but Y")
+- brand_block    → bold identity statement, one or two short sentences, exclamatory
+- scripture_card → scripture, prayer-language, contemplative, sacred-feeling
+- minimal_serif  → literary, poetic, lyrical — use sparingly when nothing else fits
+
+QUOTE PUNCH — for grunge_accent / vintage_press / editorial_wide, also pick a "punch":
+- grunge_accent  → the climactic clause (the second beat of the quote — what the script accent will say)
+- vintage_press  → a SINGLE word (the most charged noun in the quote). After removing this word, the rest must still read as a grammatical phrase
+- editorial_wide → the final clause / payoff after the setup
+- For brand_block, scripture_card, minimal_serif: omit "punch" (set to null or "")
+The punch MUST be a verbatim substring of the quote text — do not rephrase
+
 Return ONLY valid JSON (no markdown, no explanation). Sort moments by total virality score descending:
 {{
   "moments": [
@@ -105,7 +120,11 @@ Return ONLY valid JSON (no markdown, no explanation). Sort moments by total vira
     }}
   ],
   "quotes": [
-    "<punchy standalone quote, 1-3 sentences, lightly cleaned for readability>"
+    {{
+      "text": "<punchy standalone quote, 1-3 sentences, lightly cleaned for readability>",
+      "style": "<grunge_accent|vintage_press|editorial_wide|brand_block|scripture_card|minimal_serif>",
+      "punch": "<verbatim substring of text — see QUOTE PUNCH rules above; omit or empty for brand_block/scripture_card/minimal_serif>"
+    }}
   ]
 }}"""
 
@@ -500,41 +519,71 @@ def marker_abs_start(stem):
     return h * 3600 + mn * 60 + s
 
 
+VALID_QUOTE_STYLES = {
+    "grunge_accent", "vintage_press", "editorial_wide",
+    "brand_block", "scripture_card", "minimal_serif",
+}
+
+
+def _quote_to_dict(q):
+    """Coerce a quote entry (str or dict) to {text, style?, punch?}."""
+    if isinstance(q, str):
+        t = q.strip().strip('"').strip("'").strip()
+        return {"text": t} if t else None
+    if isinstance(q, dict):
+        t = (q.get("text") or q.get("quote") or "").strip().strip('"').strip("'").strip()
+        if not t:
+            return None
+        d = {"text": t}
+        style = (q.get("style") or "").strip()
+        if style in VALID_QUOTE_STYLES:
+            d["style"] = style
+        punch = (q.get("punch") or "").strip()
+        if punch and punch in t:
+            d["punch"] = punch
+        return d
+    return None
+
+
 def dedupe_quotes(quotes):
     """
     Drop duplicates and near-duplicates. Marker clips overlap the full sermon
     transcript, so the same quote often arrives from 2-3 Claude calls. We normalize
     to lowercase alphanumerics, then suppress any quote whose normalized form is
     a substring of a quote we've already kept (or vice versa).
+
+    Accepts both legacy bare strings and the new {text, style, punch} schema.
+    Returns a list of dicts (always {text, ...}) ready for make_quote_images.py.
     """
     cleaned = []
     for q in quotes:
-        if not isinstance(q, str):
+        d = _quote_to_dict(q)
+        if not d:
             continue
-        q = q.strip().strip('"').strip("'").strip()
-        if 8 <= len(q) <= 280:
-            cleaned.append(q)
+        if 8 <= len(d["text"]) <= 280:
+            cleaned.append(d)
 
     def norm(s):
         return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
     kept = []
     kept_norms = []
-    for q in cleaned:
-        n = norm(q)
+    for d in cleaned:
+        n = norm(d["text"])
         if not n:
             continue
         dup = False
         for i, kn in enumerate(kept_norms):
             if n == kn or n in kn or kn in n:
-                # keep the longer one (more complete thought)
-                if len(q) > len(kept[i]):
-                    kept[i] = q
+                # Keep the longer of the two (more complete thought); preserve
+                # style / punch metadata from whichever entry we keep.
+                if len(d["text"]) > len(kept[i]["text"]):
+                    kept[i] = d
                     kept_norms[i] = n
                 dup = True
                 break
         if not dup:
-            kept.append(q)
+            kept.append(d)
             kept_norms.append(n)
     return kept
 

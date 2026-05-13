@@ -69,9 +69,13 @@ simple-cut upload set).
       │   → viral_clips/quotes.json   (deduped standalone text quotes)
       │
       ├── make_quote_images.py ─────────────→ quote_images/quote_NN.png
-      │   • 1080×1080 dark quote cards, one per quote in quotes.json
-      │   • simple/neutral style: serif quote text, decorative “ mark
-      │   • optional --attribution "Pastor Name"
+      │   • 1080×1350 (Instagram 4:5) styled quote cards
+      │   • Six visual styles auto-picked per quote: grunge_accent,
+      │     vintage_press, editorial_wide, brand_block, scripture_card,
+      │     minimal_serif. find_moments.py tags each quote with a style
+      │     and (where relevant) a `punch` substring for accent rendering.
+      │   • Bundled fonts (skill `fonts/` dir) — no install needed
+      │   • Flags: --attribution, --style <name>, --all-styles
       │
       ├── make_sermon_recap.py ─────────────→ sermon_recap/recap.mp4
       │   • 8-12 min long-form recap of the full sermon (Furtick-style)
@@ -174,10 +178,20 @@ python3 ~/.claude/skills/sermon-clips/scripts/make_quote_images.py --attribution
 ```
 
 This:
-- Reads `viral_clips/quotes.json`
-- Renders each quote as a 1080×1080 PNG (dark bg, large serif quote text, dim
-  decorative quotation mark, optional attribution)
+- Reads `viral_clips/quotes.json` (new schema: each entry is
+  `{"text": "...", "style": "...", "punch": "..."}`; bare strings still
+  accepted for backward compatibility — heuristic picks a style)
+- Renders each quote as a 1080×1350 PNG (Instagram 4:5 portrait) in one of
+  six visual styles: `grunge_accent` (urgent / call-to-action), `vintage_press`
+  (paradox / reframe wisdom), `editorial_wide` (sermonic build-to-payoff),
+  `brand_block` (bold identity statement on flat navy), `scripture_card`
+  (contemplative italic serif on warm gradient), `minimal_serif` (fallback)
 - Saves to `quote_images/quote_NN.png` (+ a `.txt` next to each for caption copy)
+
+Flags:
+- `--attribution "Pastor Name"` — adds a line under each quote
+- `--style <name>` — force every quote into one style (overrides per-quote tag)
+- `--all-styles` — render every quote in every style (output: `quote_NN_<style>.png`)
 
 These are independent of the video pipeline — safe to run any time after
 `find_moments.py`. No Descript upload step; quote images are intended for

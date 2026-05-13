@@ -35,8 +35,14 @@ This repo is both:
       │   → viral_clips/quotes.json   (deduped standalone text quotes)
       │
       ├── make_quote_images.py ─────────────→ quote_images/quote_NN.png
-      │   • 1080×1080 dark quote cards, one per quote in quotes.json
-      │   • optional --attribution "Pastor Name"
+      │   • 1080×1350 (Instagram 4:5) styled quote cards, one per quote
+      │   • Six visual styles dispatched per-quote: grunge_accent,
+      │     vintage_press, editorial_wide, brand_block, scripture_card,
+      │     minimal_serif. Claude tags each quote in quotes.json with
+      │     the style that fits its tone; a heuristic fills in any gap.
+      │   • Bundled fonts from skill `fonts/` dir — no install required
+      │   • optional --attribution "Pastor Name", --style <name> (force a
+      │     single style), --all-styles (render every quote in every style)
       │
       ├── make_sermon_recap.py ─────────────→ sermon_recap/recap.mp4
       │   • 8–12 min long-form recap of the full sermon (Furtick-style)
@@ -203,7 +209,7 @@ python3 /path/to/clips-skill/scripts/finalize_clips.py
 | Script | Flags |
 |--------|-------|
 | `find_moments.py` | `--edited` — multi-segment edited clips (skips simple per-marker cuts) |
-| `make_quote_images.py` | `--attribution "Name"` — line under each quote |
+| `make_quote_images.py` | `--attribution "Name"`, `--style <name>` (force one style for every quote), `--all-styles` (render each quote in every style) |
 | `make_sermon_recap.py` | `--target-minutes N` — override default 10 min target |
 | `upload_to_descript.py` | `--top N`, `--all`, `--folder <name>`, `--session <name>`, `--skip N` (resume after partial failure), `--wait` (block on Descript processing; slow), `--dry-run`. Auto-detects edited mode from `vertical_clips/edited_*` files. |
 | `make_vertical.py` | Pass a single clip path to process just that file |
@@ -225,7 +231,7 @@ sermon_0503/
 │   ├── quotes.json                      # deduped standalone text quotes
 │   ├── *.mp4                            # ~45 clips (markers + full + edited)
 │   └── highlight_reel.mp4               # standalone banger statements
-├── quote_images/                        # 1080×1080 quote cards
+├── quote_images/                        # 1080×1350 styled quote cards
 │   └── quote_NN.png + quote_NN.txt
 ├── sermon_recap/                        # 8–12 min long-form recap
 │   ├── recap.mp4
@@ -340,7 +346,9 @@ encoder in `finalize_clips.py` to `libx264 -crf 20 -preset medium`.
 | `scripts/transcribe.sh` | Whisper transcription for marker clips + full sermon |
 | `scripts/transcribe_faster.py` | faster-whisper helper invoked by `transcribe.sh` |
 | `scripts/find_moments.py` | Pick viral moments + quotes via Claude, cut horizontal clips |
-| `scripts/make_quote_images.py` | Render 1080×1080 quote cards from `viral_clips/quotes.json` |
+| `scripts/make_quote_images.py` | Render 1080×1350 styled quote cards from `viral_clips/quotes.json` (six styles, auto-picked per quote) |
+| `fonts/` | Bundled Google Fonts (Anton, Bebas Neue, Inter, Lora, Permanent Marker, Yellowtail, Alfa Slab One) used by the quote-card styles |
+| `style_refs/` | Reference PNGs that inspired the quote-card styles (committed for design intent — not consumed at runtime) |
 | `scripts/make_sermon_recap.py` | Build the 8–12 min long-form recap of the full sermon |
 | `scripts/make_vertical.py` | OpenCV face-tracked 9:16 conversion |
 | `scripts/upload_to_descript.py` | Upload top N verticals to Descript |
