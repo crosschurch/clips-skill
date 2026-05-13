@@ -31,6 +31,11 @@ TRANSCRIPTS_DIR = os.path.join(WORK_DIR, "transcripts")
 CLIPS_DIR = os.path.join(WORK_DIR, "viral_clips")
 os.makedirs(CLIPS_DIR, exist_ok=True)
 
+# Hardware-accelerated decode on macOS — drops decode time substantially on
+# the re-encode paths (highlight reel teaser cuts, edited multi-segment cuts).
+# No-op on Linux/Windows; ffmpeg silently ignores when the slot is empty.
+HW_ACCEL = ["-hwaccel", "videotoolbox"] if sys.platform == "darwin" else []
+
 # ── Cross Church editorial preferences ──────────────────────────────────────
 EDITORIAL_PROMPT = """You are a social media editor for Cross Church. Find the best viral moments from a pastor's sermon for Instagram Reels, TikTok, and YouTube Shorts.
 
@@ -279,6 +284,7 @@ def make_highlight_reel(all_moments, work_dir, clips_dir, n_clips=4):
 
         cmd = [
             "ffmpeg", "-y",
+            *HW_ACCEL,
             "-ss", str(ts), "-i", source,
             "-t", str(dur),
             "-c:v", "libx264", "-crf", "18", "-preset", "fast",
@@ -819,6 +825,7 @@ def make_edited_clips(all_edited_clips, edited_dir):
             seg_path = os.path.join(tmpdir, f"seg_{j:02d}.mp4")
             cmd = [
                 "ffmpeg", "-y",
+                *HW_ACCEL,
                 "-ss", str(s), "-i", source_video,
                 "-t", str(dur),
                 "-c:v", "libx264", "-crf", "18", "-preset", "fast",

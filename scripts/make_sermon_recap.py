@@ -24,6 +24,10 @@ import subprocess
 import sys
 import tempfile
 
+# Hardware-accelerated decode on macOS — used for the per-segment re-encode
+# cuts and the final fade-and-concat encode. No-op off-darwin.
+HW_ACCEL = ["-hwaccel", "videotoolbox"] if sys.platform == "darwin" else []
+
 DEFAULT_TARGET_MIN = 10
 TARGET_MIN_FLOOR = 8       # minimum total recap length
 TARGET_MIN_CEILING = 12    # maximum total recap length
@@ -179,6 +183,7 @@ def cut_segment(source, start, end, out_path):
     duration = end - start
     cmd = [
         "ffmpeg", "-y",
+        *HW_ACCEL,
         "-ss", str(max(0.0, start - SEGMENT_HEAD_PAD)),
         "-i", source,
         "-t", str(duration + SEGMENT_HEAD_PAD + SEGMENT_TAIL_PAD),
@@ -210,6 +215,7 @@ def concat_segments(seg_files, out_path, total_duration):
 
     cmd = [
         "ffmpeg", "-y",
+        *HW_ACCEL,
         "-f", "concat", "-safe", "0", "-i", list_path,
         "-vf", vf,
         "-af", af,

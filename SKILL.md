@@ -87,6 +87,12 @@ simple-cut upload set).
       ├── make_vertical.py ─────────────────→ vertical_clips/*.mp4
       │   (face-tracked 9:16 crop, ranked by virality)
       │
+      ├── add_captions.py (optional) ──────→ captioned_clips/*_captioned.mp4
+      │   • opus-style word-by-word captions (white + yellow active word)
+      │   • re-transcribes each clip with whisper for clip-relative timestamps
+      │   • bundled Inter Black via libass fontsdir — no system fonts needed
+      │   • opt-in only — skip if captioning is happening in Descript
+      │
       ├── upload_to_descript.py ───────────→ Descript ▸ Cross Church ▸ <Session>
       │   • top 10 verticals as compositions in one new project
       │   • token: ~/.config/sermon-clips/descript.env ($DESCRIPT_API_TOKEN)
@@ -234,6 +240,28 @@ This:
 - Processes all frames with dynamic 9:16 crop
 - Re-encodes to H.264 CRF 18
 - Saves to `vertical_clips/`
+
+### 5b. (Optional) Burn opus-style captions
+
+Only run this step if the user explicitly asks for "captions", "burned-in
+subtitles", "opus captions", or wants to skip the Descript captioning step.
+Default workflow is to caption inside Descript — don't proactively run this.
+
+```bash
+cd "$WORK_DIR" && python3 ~/.claude/skills/sermon-clips/scripts/add_captions.py
+```
+
+This:
+- Reads every `vertical_clips/*.mp4`
+- Re-transcribes each clip with whisper (`base.en` by default — small, fast,
+  good-enough for short clip captions; user can override with `--model`)
+- Builds an ASS subtitle file (opus / karaoke / minimal preset)
+- Burns via libass using bundled Inter Black / Inter Regular fonts
+- Saves to `captioned_clips/<name>_captioned.mp4`
+- Skips clips that already have a captioned counterpart
+
+Flags: `--style opus|karaoke|minimal`, `--model <whisper-model>`,
+`--out-dir <name>`, `--inplace` (overwrite the vertical in place).
 
 ### 6. Upload verticals to Descript
 

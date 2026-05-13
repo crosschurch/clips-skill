@@ -59,6 +59,15 @@ This repo is both:
       ├── make_vertical.py ─────────────────→ vertical_clips/*.mp4
       │   (face-tracked 9:16 crop, ranked by virality)
       │
+      ├── add_captions.py (optional) ──────→ captioned_clips/*_captioned.mp4
+      │   • burns opus-style word-by-word captions onto verticals
+      │   • re-transcribes each clip with whisper (base.en by default) so
+      │     timestamps are clip-relative
+      │   • presets: opus (white + yellow active word, default), karaoke
+      │     (green active word, 4-word chunks), minimal (no highlight)
+      │   • uses bundled Inter Black / Inter Regular via libass fontsdir
+      │   • opt-in; skip if you're going to caption in Descript instead
+      │
       ├── upload_to_descript.py ───────────→ Descript ▸ Cross Church ▸ <Session>
       │   • default: top N verticals by virality
       │   • --edited mode: auto-uploads all edited verticals instead
@@ -202,6 +211,11 @@ python3 /path/to/clips-skill/scripts/make_sermon_recap.py
 # 4. Convert to vertical 9:16 (face-tracked crop) → vertical_clips/
 /usr/bin/python3 /path/to/clips-skill/scripts/make_vertical.py
 
+# 4b. (optional) Burn opus-style captions → captioned_clips/
+python3 /path/to/clips-skill/scripts/add_captions.py
+#   default style is "opus" (big bold white + yellow active word).
+#   Skip this step if you'd rather caption in Descript / CapCut.
+
 # 5. Upload top 10 to Descript (one project per clip, in "Cross Church" folder)
 python3 /path/to/clips-skill/scripts/upload_to_descript.py
 
@@ -218,6 +232,7 @@ python3 /path/to/clips-skill/scripts/finalize_clips.py
 | `find_moments.py` | `--edited` — multi-segment edited clips (skips simple per-marker cuts) |
 | `make_quote_images.py` | `--attribution "Name"`, `--style <name>` (force one style for every quote), `--all-styles` (render each quote in every style) |
 | `make_sermon_recap.py` | `--target-minutes N` — override default 10 min target |
+| `add_captions.py` | `--style opus|karaoke|minimal`, `--model tiny.en|base.en|small.en`, `--out-dir <name>`, `--inplace` (overwrite verticals), or pass specific .mp4 paths to caption just those |
 | `upload_to_descript.py` | `--top N`, `--all`, `--folder <name>`, `--session <name>`, `--skip N` (resume after partial failure), `--wait` (block on Descript processing; slow), `--dry-run`. Auto-detects edited mode from `vertical_clips/edited_*` files. |
 | `make_vertical.py` | Pass a single clip path to process just that file |
 
@@ -245,6 +260,8 @@ sermon_0503/
 │   └── manifest.json
 ├── vertical_clips/                      # 9:16 face-tracked
 │   └── *_vertical.mp4
+├── captioned_clips/                     # optional, only if add_captions.py was run
+│   └── *_captioned.mp4
 ├── edited_clips/                        # YOU create this — keepers from Descript
 │   └── *.mp4
 ├── final_clips/                         # music + ending slate
@@ -354,6 +371,7 @@ encoder in `finalize_clips.py` to `libx264 -crf 20 -preset medium`.
 | `scripts/transcribe_faster.py` | faster-whisper helper invoked by `transcribe.sh` |
 | `scripts/find_moments.py` | Pick viral moments + quotes via Claude, cut horizontal clips |
 | `scripts/make_quote_images.py` | Render 1080×1350 styled quote cards from `viral_clips/quotes.json` (six styles, auto-picked per quote) |
+| `scripts/add_captions.py` | Burn opus-style word-by-word captions onto vertical clips (adapted from `clipify`'s build_ass.py — MIT) |
 | `fonts/` | Bundled Google Fonts (Anton, Bebas Neue, Inter, Lora, Permanent Marker, Yellowtail, Alfa Slab One) used by the quote-card styles |
 | `style_refs/` | Reference PNGs that inspired the quote-card styles (committed for design intent — not consumed at runtime) |
 | `scripts/make_sermon_recap.py` | Build the 8–12 min long-form recap of the full sermon |
