@@ -86,10 +86,19 @@ THUMBNAIL QUOTE (renders as the YouTube thumbnail's main text):
 - Must land with weight on its own (a complete standalone thought OR a punchy fragment that reads as a hook).
 - Do NOT include attribution, ellipses, or extra punctuation. Single period at the end, lowercase letters only.
 
+YOUTUBE DESCRIPTION (the upload description on YouTube):
+- 120-220 words total. Conversational, second-person ("you"), not formal.
+- First line: a punchy one-sentence hook that mirrors the title's energy — this is the line that shows above the "more" fold in YouTube's UI, so it must earn the click on its own.
+- Blank line, then 2-3 short sentences (2-4 lines each in YouTube's preview) describing the sermon's spine — what question it answers, what shift it offers the viewer. No filler like "In this powerful message…" — just say what it's about.
+- Blank line, then a "Key moments:" list of 3 bullet lines, each a short phrase (5-10 words) describing a beat of the sermon. Use "•" bullets.
+- Blank line, then "Scripture:" followed by the primary passage if you can infer one from the transcript (e.g., "Matthew 9:18-26"). If no passage is clearly central, omit this line entirely — do NOT guess.
+- Do NOT include hashtags, URLs, subscribe pitches, or boilerplate. We add those manually.
+
 Return ONLY valid JSON (no markdown, no explanation):
 {{
   "title": "<YouTube title in Furtick/Elevation style, 4-9 words, Title Case, no trailing punctuation>",
   "thumbnail_quote": "<short verbatim quote for the thumbnail, ≤60 chars>",
+  "description": "<YouTube description following the rules above — 120-220 words, hook + body + bullets + optional Scripture line>",
   "summary": "<one or two sentences describing the sermon's spine — for the manifest, not for posting>",
   "segments": [
     {{
@@ -102,9 +111,9 @@ Return ONLY valid JSON (no markdown, no explanation):
 }}"""
 
 
-THUMB_BADGE = "sermon recap"
-THUMB_BG_BLUR_RADIUS = 10
-THUMB_BG_OVERLAY_ALPHA = 140    # 0-255; ~55% dark overlay on the blurred frame
+THUMB_BADGE = "SERMON RECAP"
+THUMB_BG_BLUR_RADIUS = 14
+THUMB_BG_OVERLAY_ALPHA = 75    # 0-255; ~30% dark overlay — keep the pastor visible
 
 
 def _fit_cover(img, w, h):
@@ -184,11 +193,10 @@ def normalize_thumb_quote(text):
 def render_thumbnail(quote_text, out_path, recap_path=None, badge=THUMB_BADGE):
     """Render a 1280×720 YouTube thumbnail.
 
-    Background: a random middle-portion frame from the recap.mp4, blurred
-    and darkened with a 55% black overlay. Foreground: lowercase quote
-    (1-6 words, ending in a period) centered, with "sermon recap" in
-    italic serif underneath. Designed to feel like a magazine cover —
-    quiet, clean, immediately readable in a YouTube grid.
+    Layout: blurred sermon frame as bg (light overlay so the pastor stays
+    visible), italic-sans quote in curly quotation marks running across
+    the canvas, and a bold-italic "SERMON RECAP" caps tag below the quote,
+    right-aligned to the quote's right edge.
 
     `recap_path` is used as the background source. When missing or
     unreadable, falls back to a flat dark canvas so a thumbnail still
@@ -204,15 +212,22 @@ def render_thumbnail(quote_text, out_path, recap_path=None, badge=THUMB_BADGE):
         return False
 
     fg = (255, 255, 255)
-    tag_fg = (225, 222, 215)
-    quote_font_path = os.path.join(FONT_DIR, "Inter-Regular.ttf")
-    italic_font_path = os.path.join(FONT_DIR, "Lora-Italic.ttf")
+    quote_font_path = os.path.join(FONT_DIR, "Inter-Italic.ttf")
+    tag_font_path = os.path.join(FONT_DIR, "Inter-BlackItalic.ttf")
+    fallback = os.path.join(FONT_DIR, "Inter-Regular.ttf")
+    if not os.path.exists(quote_font_path):
+        quote_font_path = fallback
+    if not os.path.exists(tag_font_path):
+        tag_font_path = os.path.join(FONT_DIR, "Inter-Bold.ttf")
+        if not os.path.exists(tag_font_path):
+            tag_font_path = fallback
     if not os.path.exists(quote_font_path):
         return False
-    if not os.path.exists(italic_font_path):
-        italic_font_path = quote_font_path
 
-    # Background: blurred middle frame + dark overlay
+    # Curly quotes around the body
+    quoted = f"“{quote_text}”"
+
+    # Background: blurred middle frame + light dark overlay
     bg = _grab_blurred_bg(recap_path)
     if bg is None:
         bg = Image.new("RGB", (THUMB_W, THUMB_H), (10, 10, 12))
@@ -220,20 +235,20 @@ def render_thumbnail(quote_text, out_path, recap_path=None, badge=THUMB_BADGE):
     img = Image.alpha_composite(bg.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    # Layout: quote slightly above center, "sermon recap" italic underneath
-    pad_x = 130
+    pad_x = 70
     max_w = THUMB_W - 2 * pad_x
-    max_h = int(THUMB_H * 0.55)    # quote box — leaves room for tag below
 
-    # Binary-search the largest size that fits 1-2 lines
-    def wrap(text, font_obj):
+    # Single-line first (the reference shows the quote on one line). If it
+    # truly can't fit even at the smallest reasonable size, fall back to 2 lines.
+    def line_width(text, f):
+        return draw.textbbox((0, 0), text, font=f)[2]
+
+    def wrap(text, f):
         words = text.split()
-        if not words:
-            return []
         lines, cur = [], ""
         for w in words:
             trial = (cur + " " + w).strip()
-            if draw.textbbox((0, 0), trial, font=font_obj)[2] <= max_w or not cur:
+            if line_width(trial, f) <= max_w or not cur:
                 cur = trial
             else:
                 lines.append(cur)
@@ -242,62 +257,79 @@ def render_thumbnail(quote_text, out_path, recap_path=None, badge=THUMB_BADGE):
             lines.append(cur)
         return lines
 
-    lo, hi = 60, 160
-    best = None
+    # Try single-line: biggest size where the whole quote fits in one line
+    lo, hi = 50, 150
+    best_single = None
     while lo <= hi:
         mid = (lo + hi) // 2
         f = ImageFont.truetype(quote_font_path, mid)
-        lines = wrap(quote_text, f)
-        if len(lines) > 2:
-            hi = mid - 1
-            continue
-        ascent, descent = f.getmetrics()
-        line_h = int((ascent + descent) * 1.18)
-        total_h = line_h * len(lines)
-        widest = max((draw.textbbox((0, 0), ln, font=f)[2] for ln in lines), default=0)
-        if total_h <= max_h and widest <= max_w:
-            best = (f, lines, line_h)
+        if line_width(quoted, f) <= max_w:
+            best_single = (f, [quoted], mid)
             lo = mid + 1
         else:
             hi = mid - 1
-    if best is None:
-        f = ImageFont.truetype(quote_font_path, 60)
-        lines = wrap(quote_text, f)[:2]
-        ascent, descent = f.getmetrics()
-        line_h = int((ascent + descent) * 1.18)
-        best = (f, lines, line_h)
 
-    font_obj, lines, line_h = best
+    if best_single:
+        font_obj, lines, _ = best_single
+    else:
+        # Fall back to 2-line wrap
+        lo, hi = 44, 110
+        best_wrap = None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            f = ImageFont.truetype(quote_font_path, mid)
+            lines = wrap(quoted, f)
+            if len(lines) > 2:
+                hi = mid - 1
+                continue
+            widest = max((line_width(ln, f) for ln in lines), default=0)
+            if widest <= max_w:
+                best_wrap = (f, lines, mid)
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        if best_wrap is None:
+            f = ImageFont.truetype(quote_font_path, 44)
+            best_wrap = (f, wrap(quoted, f)[:2], 44)
+        font_obj, lines, _ = best_wrap
+
+    ascent, descent = font_obj.getmetrics()
+    line_h = int((ascent + descent) * 1.05)
     total_h = line_h * len(lines)
 
-    # Tag font (italic "sermon recap") sizing — fixed
-    tag_font = ImageFont.truetype(italic_font_path, 38)
-    tag_text = (badge or "").strip()
-    tag_h = 0
-    if tag_text:
-        tag_h = tag_font.getmetrics()[0] + tag_font.getmetrics()[1]
+    # Tag — bold-italic caps, right-aligned to the quote's right edge
+    tag_text = (badge or "").strip().upper()
+    tag_font_size = max(28, int(font_obj.size * 0.42))
+    tag_font = ImageFont.truetype(tag_font_path, tag_font_size)
+    tag_w = draw.textbbox((0, 0), tag_text, font=tag_font)[2]
+    tag_ascent, tag_descent = tag_font.getmetrics()
+    tag_h = tag_ascent + tag_descent
 
-    # Vertical layout: stack quote + gap + tag, centered as a group
-    gap = 56 if tag_text else 0
+    gap = max(8, int(line_h * 0.05))
     group_h = total_h + gap + tag_h
-    y = (THUMB_H - group_h) // 2 - 10   # slight nudge upward feels more balanced
 
-    for ln in lines:
-        bbox = draw.textbbox((0, 0), ln, font=font_obj)
-        w = bbox[2] - bbox[0]
-        x = (THUMB_W - w) // 2
-        # Subtle drop shadow for legibility on busy blurred backgrounds
-        draw.text((x + 2, y + 2), ln, font=font_obj, fill=(0, 0, 0, 200))
+    # Vertical position: roughly center, slight upward bias
+    y = (THUMB_H - group_h) // 2 - 4
+
+    # Draw quote lines — left aligned within an inner block that's itself centered
+    line_widths = [line_width(ln, font_obj) for ln in lines]
+    block_w = max(line_widths) if line_widths else 0
+    block_x = (THUMB_W - block_w) // 2
+
+    quote_right_x = block_x  # tracked so we can right-align the tag to the longest line
+    for ln, lw in zip(lines, line_widths):
+        x = block_x  # left-align within the block (lets the tag align to a known right edge)
+        # Soft shadow for legibility on busy blurred backgrounds
+        draw.text((x + 3, y + 3), ln, font=font_obj, fill=(0, 0, 0))
         draw.text((x, y), ln, font=font_obj, fill=fg)
+        quote_right_x = max(quote_right_x, x + lw)
         y += line_h
 
     if tag_text:
-        y += gap - 12
-        bbox = draw.textbbox((0, 0), tag_text, font=tag_font)
-        w = bbox[2] - bbox[0]
-        x = (THUMB_W - w) // 2
-        draw.text((x + 1, y + 1), tag_text, font=tag_font, fill=(0, 0, 0, 200))
-        draw.text((x, y), tag_text, font=tag_font, fill=tag_fg)
+        y += gap
+        tag_x = quote_right_x - tag_w
+        draw.text((tag_x + 2, y + 2), tag_text, font=tag_font, fill=(0, 0, 0))
+        draw.text((tag_x, y), tag_text, font=tag_font, fill=fg)
 
     img.save(out_path, "JPEG", quality=92, optimize=True)
     return True
@@ -523,12 +555,13 @@ def main():
         print("✗ No usable recap plan returned")
         sys.exit(1)
 
-    # Meta-only path — refresh title + thumbnail without re-cutting video
+    # Meta-only path — refresh title + thumbnail + description without re-cutting video
     if meta_only:
         out_dir = os.path.join(work_dir, "sermon_recap")
         os.makedirs(out_dir, exist_ok=True)
         title = (plan.get("title") or "").strip()
         thumb_quote = (plan.get("thumbnail_quote") or "").strip()
+        description = (plan.get("description") or "").strip()
 
         manifest_path = os.path.join(out_dir, "manifest.json")
         manifest = {}
@@ -540,6 +573,7 @@ def main():
                 manifest = {}
         manifest["title"] = title
         manifest["thumbnail_quote"] = thumb_quote
+        manifest["description"] = description
         manifest["summary"] = plan.get("summary", manifest.get("summary", ""))
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
@@ -547,6 +581,10 @@ def main():
         if title:
             with open(os.path.join(out_dir, "title.txt"), "w") as f:
                 f.write(title + "\n")
+
+        if description:
+            with open(os.path.join(out_dir, "description.txt"), "w") as f:
+                f.write(description + "\n")
 
         thumb_path = os.path.join(out_dir, "thumbnail.jpg")
         # Use the existing recap.mp4 (if any) as the blurred-frame source
@@ -557,6 +595,8 @@ def main():
         print(f"✓ manifest    →  {manifest_path}")
         print(f"  Title : {title}")
         print(f"  Thumb : “{normalize_thumb_quote(thumb_quote)}”")
+        if description:
+            print(f"  Desc  : ({len(description)} chars)  →  {os.path.join(out_dir, 'description.txt')}")
         return
 
     cleaned, warnings = validate_segments(
@@ -604,11 +644,13 @@ def main():
 
     title = (plan.get("title") or "").strip()
     thumb_quote = (plan.get("thumbnail_quote") or "").strip()
+    description = (plan.get("description") or "").strip()
 
     manifest = {
         "source": os.path.basename(video),
         "title": title,
         "thumbnail_quote": thumb_quote,
+        "description": description,
         "summary": plan.get("summary", ""),
         "target_minutes": target_min,
         "total_seconds": total,
@@ -618,11 +660,14 @@ def main():
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
 
-    # Convenience: title.txt next to manifest, so anyone scripting against
-    # this output doesn't have to parse JSON.
+    # Convenience: title.txt + description.txt next to manifest, so anyone
+    # scripting against this output doesn't have to parse JSON.
     if title:
         with open(os.path.join(out_dir, "title.txt"), "w") as f:
             f.write(title + "\n")
+    if description:
+        with open(os.path.join(out_dir, "description.txt"), "w") as f:
+            f.write(description + "\n")
 
     # Render thumbnail.jpg using the freshly-cut recap as the blurred bg
     thumb_path = os.path.join(out_dir, "thumbnail.jpg")
