@@ -140,10 +140,36 @@ def line_width(draw, text, font_obj):
     return draw.textbbox((0, 0), text, font=font_obj)[2]
 
 
+def cap_line_height(draw, font_obj, gap_pct=0.12):
+    """Measure tight line-height for ALL-CAPS text from a rendered bbox.
+
+    PIL's getmetrics() reserves vertical room for descenders and accents
+    that don't appear in all-caps text — leading to airy spacing for our
+    display layouts. Instead, measure the actual ink box of a representative
+    caps string and add a small percentage gap for breathing room.
+    """
+    bbox = draw.textbbox((0, 0), "AHJMQYWQGP", font=font_obj)
+    ink_h = bbox[3] - bbox[1]
+    return int(ink_h * (1.0 + gap_pct))
+
+
+def cap_top_offset(draw, font_obj):
+    """Distance from where draw.text((x, y), ...) places the top of the font
+    box down to where the caps ink actually starts. Subtracting this from y
+    makes the cap top land exactly at y — collapses the "phantom whitespace"
+    above each caps line.
+    """
+    return draw.textbbox((0, 0), "AHJMQYWQGP", font=font_obj)[1]
+
+
 def fit_uniform(draw, lines, font_name, max_w, max_h, max_size=240, min_size=40,
-                line_spacing=1.02):
+                line_spacing=1.02, tight_caps=False):
     """Find the largest font size such that every pre-broken line fits max_w
-    and the stacked block fits max_h. `lines` is a list of strings."""
+    and the stacked block fits max_h. `lines` is a list of strings.
+
+    When `tight_caps` is True, use bbox-measured cap ink height (much
+    tighter for display caps) instead of ascent+descent * line_spacing.
+    """
     if not lines:
         return None, 0, 0
     lo, hi = min_size, max_size
@@ -152,8 +178,11 @@ def fit_uniform(draw, lines, font_name, max_w, max_h, max_size=240, min_size=40,
         mid = (lo + hi) // 2
         f = font(font_name, mid)
         widest = max(line_width(draw, ln, f) for ln in lines)
-        a, d = f.getmetrics()
-        line_h = int((a + d) * line_spacing)
+        if tight_caps:
+            line_h = cap_line_height(draw, f)
+        else:
+            a, d = f.getmetrics()
+            line_h = int((a + d) * line_spacing)
         total_h = line_h * len(lines)
         if widest <= max_w and total_h <= max_h:
             best = (f, line_h, mid)
@@ -162,8 +191,11 @@ def fit_uniform(draw, lines, font_name, max_w, max_h, max_size=240, min_size=40,
             hi = mid - 1
     if best is None:
         f = font(font_name, min_size)
-        a, d = f.getmetrics()
-        line_h = int((a + d) * line_spacing)
+        if tight_caps:
+            line_h = cap_line_height(draw, f)
+        else:
+            a, d = f.getmetrics()
+            line_h = int((a + d) * line_spacing)
         best = (f, line_h, min_size)
     return best
 
@@ -211,13 +243,13 @@ def render_massive_stack(text, out_path, lines=None, palette="light",
     f, line_h, _ = fit_uniform(
         draw, raw_lines, ANTON,
         max_w=max_w, max_h=max_h,
-        max_size=260, min_size=58, line_spacing=1.02,
+        max_size=260, min_size=58, tight_caps=True,
     )
     total_h = line_h * len(raw_lines)
     y = (HEIGHT - total_h) // 2
 
     for ln in raw_lines:
-        draw.text((pad_x, y), ln, font=f, fill=pal["ink"])
+        draw.text((pad_x, y - cap_top_offset(draw, f)), ln, font=f, fill=pal["ink"])
         y += line_h
 
     img.save(out_path, "PNG", optimize=True)
@@ -291,10 +323,8 @@ def render_mixed_hierarchy(text, out_path, palette="light", emphasis=None,
         huge_size = int(small_size * 2.2)
         f_s = font(INTER_BLACK, small_size)
         f_h = font(ANTON, huge_size)
-        a_s, d_s = f_s.getmetrics()
-        a_h, d_h = f_h.getmetrics()
-        line_h_s = int((a_s + d_s) * 1.10)
-        line_h_h = int((a_h + d_h) * 1.02)
+        line_h_s = cap_line_height(draw, f_s, gap_pct=0.18)
+        line_h_h = cap_line_height(draw, f_h, gap_pct=0.10)
         # height
         h = sum(line_h_h if is_h else line_h_s for _, is_h in plan)
         # widest
@@ -324,7 +354,7 @@ def render_mixed_hierarchy(text, out_path, palette="light", emphasis=None,
     for ln, is_h in plan:
         f = f_h if is_h else f_s
         lh = lh_h if is_h else lh_s
-        draw.text((pad_x, y), ln, font=f, fill=pal["ink"])
+        draw.text((pad_x, y - cap_top_offset(draw, f)), ln, font=f, fill=pal["ink"])
         y += lh
 
     img.save(out_path, "PNG", optimize=True)
@@ -379,10 +409,8 @@ def render_stacked_payoff(text, out_path, punch=None, palette="light",
         payoff_size = int(setup_size * 2.1)
         f_su = font(INTER_BLACK, setup_size)
         f_po = font(ANTON, payoff_size)
-        a, d = f_su.getmetrics()
-        lh_su = int((a + d) * 1.08)
-        a, d = f_po.getmetrics()
-        lh_po = int((a + d) * 1.02)
+        lh_su = cap_line_height(draw, f_su, gap_pct=0.18)
+        lh_po = cap_line_height(draw, f_po, gap_pct=0.10)
         gap = max(20, int(setup_size * 0.55))
         h = lh_su * len(setup_lines) + (gap if setup_lines else 0) + lh_po * len(payoff_lines)
         widest = 0
@@ -410,12 +438,12 @@ def render_stacked_payoff(text, out_path, punch=None, palette="light",
     y = (HEIGHT - total_h) // 2
 
     for ln in setup_lines:
-        draw.text((pad_x, y), ln, font=f_su, fill=pal["ink"])
+        draw.text((pad_x, y - cap_top_offset(draw, f_su)), ln, font=f_su, fill=pal["ink"])
         y += lh_su
     if setup_lines:
         y += gap
     for ln in payoff_lines:
-        draw.text((pad_x, y), ln, font=f_po, fill=pal["ink"])
+        draw.text((pad_x, y - cap_top_offset(draw, f_po)), ln, font=f_po, fill=pal["ink"])
         y += lh_po
 
     img.save(out_path, "PNG", optimize=True)
@@ -442,7 +470,7 @@ def render_classic_caps(text, out_path, palette="light", emphasis=None,
     f, line_h, _ = fit_uniform(
         draw, raw_lines, INTER_BLACK,
         max_w=max_w, max_h=max_h,
-        max_size=180, min_size=44, line_spacing=1.08,
+        max_size=180, min_size=44, tight_caps=True,
     )
     total_h = line_h * len(raw_lines)
     y = (HEIGHT - total_h) // 2
@@ -450,7 +478,7 @@ def render_classic_caps(text, out_path, palette="light", emphasis=None,
     for ln in raw_lines:
         w = line_width(draw, ln, f)
         x = (WIDTH - w) // 2
-        draw.text((x, y), ln, font=f, fill=pal["ink"])
+        draw.text((x, y - cap_top_offset(draw, f)), ln, font=f, fill=pal["ink"])
         y += line_h
 
     # Subtle rule below the block for visual closure
@@ -505,10 +533,8 @@ def render_centered_with_rule(text, out_path, palette="light", emphasis=None,
         f_ac = font(INTER_BLACK, accent_size)
         lh_su = 0
         if f_su:
-            a, d = f_su.getmetrics()
-            lh_su = int((a + d) * 1.25)
-        a, d = f_ac.getmetrics()
-        lh_ac = int((a + d) * 1.10)
+            lh_su = cap_line_height(draw, f_su, gap_pct=0.30)
+        lh_ac = cap_line_height(draw, f_ac, gap_pct=0.20)
         gap = 28 if setup_lines else 0
         h = lh_su * len(setup_lines) + gap + lh_ac * len(accent_lines)
         widest = 0
@@ -545,14 +571,14 @@ def render_centered_with_rule(text, out_path, palette="light", emphasis=None,
     for ln in setup_lines:
         w = line_width(draw, ln, f_su)
         x = (WIDTH - w) // 2
-        draw.text((x, y), ln, font=f_su, fill=pal["ink"])
+        draw.text((x, y - cap_top_offset(draw, f_su)), ln, font=f_su, fill=pal["ink"])
         y += lh_su
     if setup_lines:
         y += gap
     for ln in accent_lines:
         w = line_width(draw, ln, f_ac)
         x = (WIDTH - w) // 2
-        draw.text((x, y), ln, font=f_ac, fill=pal["ink"])
+        draw.text((x, y - cap_top_offset(draw, f_ac)), ln, font=f_ac, fill=pal["ink"])
         y += lh_ac
 
     # Rule below the block
