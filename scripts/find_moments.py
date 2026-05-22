@@ -655,9 +655,9 @@ Return ONLY a JSON array of 5 opener candidates, sorted strongest first.
 """
 
 
-CAPTION_PROMPT = """You are writing the Instagram CAPTION for a Cross Church sermon's quote-card carousel. The caption sits below the carousel and converts a scroll into a listen. It follows a strict 5-part structure that the church has used for weeks — DO NOT deviate from the structure, only from the words inside it.
+CAPTION_PROMPT = """You are writing the Instagram CAPTION for a Cross Church sermon's quote-card carousel. The caption is NOT a highlight reel of punchy lines — it is the sermon's SPINE, compressed into five blocks. Read the sermon material, identify the sermon's main teaching point (its thesis), the wound it named in the listener, and the gospel resolution it offered. Each block of the caption maps to one of those beats.
 
-REFERENCE — this is last week's caption (about Jesus saying "have courage, daughter" to the bleeding woman):
+REFERENCE — last week's caption (sermon about the bleeding woman in Mark 5 / Matthew 9):
 
 ---
 HAVE COURAGE, DAUGHTER.
@@ -671,43 +671,50 @@ There is hope. There is healing. We have a home.
 If you missed this Sunday, find the episode in our bio or by searching on YT or wherever you get podcasts for "Cross Church Surprise."
 ---
 
-STRUCTURE (mandatory — five blocks, each separated by a single blank line):
+HOW LAST WEEK'S CAPTION MAPS TO THAT SERMON'S SPINE:
+- HOOK ("HAVE COURAGE, DAUGHTER.") — Jesus's defining words to the bleeding woman in the passage. The most identifiable line of the entire message.
+- THEME ("The miracles that Jesus performed teach us about his authority. But they also teach us about how we should come to Jesus.") — the sermon's ACTUAL TEACHING POINT. Not a quote from the sermon; the thesis the pastor was making. Two clauses: what we knew + the deeper turn.
+- TRIPLET ("Wounded. Weary. Worn.") — the state of the woman in the passage AND the state of the listener. The sermon's name for the human condition it spoke to.
+- PAYOFF ("There is hope. There is healing. We have a home.") — the gospel answer to the triplet. If the triplet was wounded/weary/worn, the payoff is hope/healing/home. Direct mapping.
 
-1. HOOK — one line, ALL CAPS, ends with a period. 3-7 words. Pulled from THIS sermon's punchiest line (the one a stranger would screenshot). Often imperative, declarative, or a direct quote of Jesus from the passage.
+YOUR TASK: write THIS week's caption by deriving the same four beats from the sermon material below, then formatting them in the exact same structure. The hook is a defining sermon line (often a quote from Jesus, the passage, or the pastor's central declaration). The theme is the SERMON'S THESIS — what the message was teaching, in pastoral plain language, not a clever line. The triplet names what the listener is carrying. The payoff is the gospel resolution.
+
+STRUCTURE (mandatory — six lines/blocks, each separated by a single blank line):
+
+1. HOOK — one line, ALL CAPS, ends with a period. 3-7 words.
 
 2. EM-DASH — literally just the character "—" on its own line. Separator.
 
-3. THEME — 1-2 sentences in normal sentence case. Names what the sermon taught — the central truth, the passage's lesson, or the move Jesus made. Pastoral, not academic.
+3. THEME — 1-2 sentences in sentence case. The sermon's main teaching point. Often two clauses joined by "But …" / "And …" — the obvious thing the sermon affirmed, plus the deeper turn it made.
 
-4. EMOTIONAL TRIPLET — three single words (or very short phrases), each ending in a period, on one line. Captures the human condition this sermon spoke to. Alliterative or rhythmic when possible. Example shape: "Wounded. Weary. Worn." Other shapes: "Tired. Trying. Tangled." "Religious. Restless. Rigid."
+4. EMOTIONAL TRIPLET — three single words (each ending in a period), on one line. Names the human condition the sermon spoke to. Alliterative when natural.
 
-5. HOPE PAYOFF — one line, three parallel clauses, each ending in a period. Standard shape: "There is X. There is Y. We have Z." or "There is X. There is Y. There is Z." X/Y/Z are warm gospel words (hope, grace, mercy, healing, peace, freedom, rest, a Savior, a home, Jesus, etc.). Must answer the triplet — if the triplet named the wound, the payoff names the healing.
+5. HOPE PAYOFF — one line, three parallel clauses each ending in a period. Shape: "There is X. There is Y. We have Z." or "There is X. There is Y. There is Z." Each word in the payoff directly answers the corresponding word in the triplet (wounded → healing, etc.).
 
-6. CTA — verbatim, with the sermon's podcast title swapped in:
+6. CTA — verbatim:
    If you missed this Sunday, find the episode in our bio or by searching on YT or wherever you get podcasts for "{podcast_title}".
-
-(Yes, "5 parts" + the CTA = 6 lines/blocks. The em-dash counts as a structural separator, not a content block.)
 
 VOICE NOTES:
 - Warm, pastoral, never marketing-y
-- Sentence-case the theme; the hook is the only ALL CAPS line
-- No emojis, no hashtags
+- The hook is the only ALL CAPS line — everything else is sentence case
+- No emojis, no hashtags, no series-name in the theme
 - Don't reuse last week's wording — match the SHAPE, not the words
+- Triplet ↔ Payoff must rhyme conceptually. Wounded → healing. Restless → rest. Lost → home. Anxious → peace. Stuck → freedom.
 
 SERMON MATERIAL FOR THIS WEEK:
 
-Opener candidates (umbrella themes already validated for this sermon):
+Carousel opener candidates (umbrella framing already chosen for this sermon — strong signal for what the sermon is ABOUT):
 {openers_block}
 
-Top quotes (use these to source the hook + theme + payoff vocabulary):
-{quotes_block}
-
-Top moment titles (for thematic context):
+Top moments (each has a title + a one-line "why" — these tell you what the message was teaching, beat by beat):
 {moments_block}
+
+Top quotes (sermon's punchiest standalone lines — useful for hook vocabulary):
+{quotes_block}
 
 Podcast/episode title for the CTA: "{podcast_title}"
 
-Return ONLY the caption text — plain text, exactly the 6 blocks above (hook, em-dash, theme, triplet, payoff, CTA), each separated by a single blank line. No preamble, no JSON, no markdown fences. Pick the single strongest hook from the material; do not return alternates.
+Return ONLY the caption text — plain text, exactly the 6 blocks above, each separated by a single blank line. No preamble, no JSON, no markdown fences. Pick the single strongest version; do not return alternates.
 """
 
 
@@ -723,8 +730,12 @@ def generate_caption(quotes, moments, openers, work_dir,
 
     openers_block = "\n".join(f"- {o}" for o in openers[:5]) if openers else "(none)"
     quotes_block = "\n".join(f"- {q['text']}" for q in quotes[:20]) or "(none)"
-    top_moments = sorted(moments, key=lambda m: m.get("virality_total", 0), reverse=True)[:8]
-    moments_block = "\n".join(f"- {m.get('title', '')}" for m in top_moments) or "(none)"
+    top_moments = sorted(moments, key=lambda m: m.get("virality_total", 0), reverse=True)[:10]
+    moments_block = "\n".join(
+        f"- {m.get('title', '')}" +
+        (f"  ({m['why']})" if m.get("why") else "")
+        for m in top_moments
+    ) or "(none)"
 
     prompt = CAPTION_PROMPT.format(
         openers_block=openers_block,
