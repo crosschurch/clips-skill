@@ -620,6 +620,85 @@ def dedupe_quotes(quotes):
     return kept
 
 
+OPENER_PROMPT = """You are writing the opening line for a Cross Church sermon's social-media carousel — the hook that sits above the quote graphics and pulls people in. Think Instagram carousel cover or "swipe →" first slide, or the first line of the caption.
+
+Style:
+- 6-14 words
+- Sentence case, no period (it should feel like a hook, not a closing)
+- Concrete and specific — name the person/scene/passage when possible
+- Curious or paradoxical pull: a question, a "what X teaches us about Y" framing, a counterintuitive observation, or a "the thing nobody says about X" reveal
+- Voice: warm pastor, not BuzzFeed. Avoid clickbait stunts ("you won't believe…"), avoid hype words, avoid clichés
+- Must connect THIS sermon's content — not generic spirituality
+
+Examples of the right voice:
+- what the bleeding woman teaches about how jesus sees you
+- the most religious people in the room missed jesus completely
+- why jesus refused to answer the most important question of his life
+- you've been reading the prodigal son wrong
+- the line jesus dropped that stopped an entire crowd
+
+TOP SERMON MOMENTS (highest-virality clips, in priority order):
+{moments_block}
+
+TOP QUOTES from the sermon:
+{quotes_block}
+
+Return ONLY a JSON array of 5 opener candidates, sorted strongest first.
+
+[
+  "opener line 1",
+  "opener line 2",
+  ...
+]
+"""
+
+
+def generate_openers(moments, quotes, work_dir):
+    """Ask Claude for 5 carousel-opener candidates based on the top moments and quotes.
+    Writes viral_clips/openers.txt — strongest first, one per line."""
+    if not moments and not quotes:
+        return []
+
+    top_moments = sorted(moments, key=lambda m: m.get("virality_total", 0), reverse=True)[:8]
+    moments_block = "\n".join(
+        f"- [{m.get('virality_total', 0)}] {m.get('title', '')}" +
+        (f" — {m['why']}" if m.get("why") else "")
+        for m in top_moments
+    ) or "(none)"
+    quotes_block = "\n".join(f"- {q['text']}" for q in quotes[:15]) or "(none)"
+
+    prompt = OPENER_PROMPT.format(moments_block=moments_block, quotes_block=quotes_block)
+
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt],
+            capture_output=True,
+            text=True,
+            cwd=work_dir,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        print("  ✗ openers: claude timeout")
+        return []
+
+    if result.returncode != 0:
+        print(f"  ✗ openers: claude error: {result.stderr[:200]}")
+        return []
+
+    match = re.search(r"\[[\s\S]*\]", result.stdout)
+    if not match:
+        print(f"  ✗ openers: no JSON array in response:\n{result.stdout[:300]}")
+        return []
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError as e:
+        print(f"  ✗ openers: JSON parse: {e}")
+        return []
+
+    openers = [str(x).strip() for x in data if isinstance(x, str) and str(x).strip()]
+    return openers
+
+
 def overlaps(abs_start, abs_end, accepted, threshold=0.5):
     """Return True if [abs_start, abs_end] overlaps >threshold of either interval."""
     dur = abs_end - abs_start
@@ -782,6 +861,17 @@ def main():
     print(f"✓ Cut {total_cut} clips  →  {CLIPS_DIR}")
     print(f"✓ Manifest: {manifest}")
     print(f"✓ Quotes: {len(deduped_quotes)} unique (from {len(all_quotes)} raw)  →  {quotes_manifest}")
+
+    # Generate 5 carousel-opener candidates from the top moments + quotes
+    print(f"\nGenerating carousel openers...")
+    openers = generate_openers(all_moments, deduped_quotes, WORK_DIR)
+    if openers:
+        openers_path = os.path.join(CLIPS_DIR, "openers.txt")
+        with open(openers_path, "w") as f:
+            f.write("\n".join(openers) + "\n")
+        print(f"✓ Openers: {len(openers)}  →  {openers_path}")
+        for i, o in enumerate(openers, 1):
+            print(f"  [{i}] {o}")
 
     # Build horizontal highlight reel from top moments' teaser hooks
     # (uses simple-cut moments' teaser timestamps; in --edited mode these come
