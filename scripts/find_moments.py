@@ -620,27 +620,29 @@ def dedupe_quotes(quotes):
     return kept
 
 
-OPENER_PROMPT = """You are writing the opening line for a Cross Church sermon's social-media carousel — the hook that sits above the quote graphics and pulls people in. Think Instagram carousel cover or "swipe →" first slide, or the first line of the caption.
+OPENER_PROMPT = """You are writing the OPENER line for an Instagram carousel made up of standalone sermon quote cards. The opener is the first slide (or first line of the caption) — its job is to GIVE THE QUOTES CONTEXT so a stranger scrolling past can read the quotes without needing the original sermon.
+
+Read the quotes below carefully. They reference characters, passages, and scenes from the sermon. Many of them don't stand alone — "the Pharisees," "the withered hand," "Jesus stopped them in their tracks" — these need the opener to set the scene.
+
+Your opener is a one-line setup that tells the reader: "here's what these quotes are about, here's the scene/passage/idea — now read them and they'll land."
 
 Style:
 - 6-14 words
-- Sentence case, no period (it should feel like a hook, not a closing)
-- Concrete and specific — name the person/scene/passage when possible
-- Curious or paradoxical pull: a question, a "what X teaches us about Y" framing, a counterintuitive observation, or a "the thing nobody says about X" reveal
-- Voice: warm pastor, not BuzzFeed. Avoid clickbait stunts ("you won't believe…"), avoid hype words, avoid clichés
-- Must connect THIS sermon's content — not generic spirituality
+- Sentence case, no period (it's a setup, not a closing line)
+- Concrete and specific — name the passage / character / scene when the quotes reference it
+- Hooky but informational. A reader should think "oh, I want to know what this is about" AND "ah, now I have the frame I need."
+- Voice: warm pastor, not BuzzFeed. Avoid clickbait stunts, hype words, generic spirituality.
+- Should be a frame that COVERS the quotes — not the punchiest single quote, not a tease for one moment, but the umbrella over all of them.
 
-Examples of the right voice:
+Examples of the right shape:
+- what jesus said to the pharisees in matthew 12
+- a story about jesus, a withered hand, and the people watching
 - what the bleeding woman teaches about how jesus sees you
-- the most religious people in the room missed jesus completely
-- why jesus refused to answer the most important question of his life
-- you've been reading the prodigal son wrong
-- the line jesus dropped that stopped an entire crowd
+- what the pharisees got wrong — and what we still do
+- the day jesus broke the sabbath to heal somebody
+- on self-made religion, withered hearts, and the gospel we keep editing
 
-TOP SERMON MOMENTS (highest-virality clips, in priority order):
-{moments_block}
-
-TOP QUOTES from the sermon:
+QUOTES (these are what the carousel will show — your opener sets them up):
 {quotes_block}
 
 Return ONLY a JSON array of 5 opener candidates, sorted strongest first.
@@ -654,20 +656,19 @@ Return ONLY a JSON array of 5 opener candidates, sorted strongest first.
 
 
 def generate_openers(moments, quotes, work_dir):
-    """Ask Claude for 5 carousel-opener candidates based on the top moments and quotes.
-    Writes viral_clips/openers.txt — strongest first, one per line."""
-    if not moments and not quotes:
+    """Ask Claude for 5 carousel-opener candidates that contextualize the quotes.
+    The opener is the first carousel slide / caption hook — its job is to give
+    the quote cards enough context that a stranger can read them cold.
+    Writes viral_clips/openers.txt — strongest first, one per line.
+
+    `moments` is currently unused but kept in the signature for forward-compat
+    (we may want to use the sermon title/scripture from a recap manifest later)."""
+    if not quotes:
         return []
 
-    top_moments = sorted(moments, key=lambda m: m.get("virality_total", 0), reverse=True)[:8]
-    moments_block = "\n".join(
-        f"- [{m.get('virality_total', 0)}] {m.get('title', '')}" +
-        (f" — {m['why']}" if m.get("why") else "")
-        for m in top_moments
-    ) or "(none)"
-    quotes_block = "\n".join(f"- {q['text']}" for q in quotes[:15]) or "(none)"
+    quotes_block = "\n".join(f"- {q['text']}" for q in quotes[:25]) or "(none)"
 
-    prompt = OPENER_PROMPT.format(moments_block=moments_block, quotes_block=quotes_block)
+    prompt = OPENER_PROMPT.format(quotes_block=quotes_block)
 
     try:
         result = subprocess.run(
