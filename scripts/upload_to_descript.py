@@ -356,6 +356,14 @@ def main() -> int:
     for r in results:
         print(f"  {r['rank']:02d}. {r['title']}")
         print(f"      {r['project_url']}")
+
+    edited_dir = work / "edited_clips"
+    if not edited_dir.exists():
+        edited_dir.mkdir()
+        print(f"\nCreated: {edited_dir}")
+        print("→ After reviewing in Descript, export keepers here and re-run")
+        print("  /sermon-clips to finalize with music + ending slate.")
+
     return 0 if not failures else 1
 
 

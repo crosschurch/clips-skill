@@ -84,6 +84,13 @@ simple-cut upload set).
       │   • Hard cuts only — no within-segment editing
       │   • Horizontal 16:9 (no vertical conversion)
       │
+      ├── youtube_upload.py (optional) ────→ YouTube ▸ recap as unlisted video
+      │   • Uploads sermon_recap/recap.mp4 with title + description + thumbnail
+      │   • Default privacy: unlisted (flip to public manually in Studio)
+      │   • One-time OAuth setup via `--setup`; refresh token cached at
+      │     ~/.config/sermon-clips/youtube-token.json
+      │   • Opt-in only — never runs as part of the automatic pipeline
+      │
       ├── sync_transcript.py (optional) ───→ transcripts/<stem>.md   + prod DB
       │   • Converts the Whisper JSON to Defuddle-format markdown
       │     (`**MM:SS** · text` per line)
@@ -236,6 +243,38 @@ This:
 - Output: `sermon_recap/recap.mp4` + `sermon_recap/manifest.json`
 - Horizontal 16:9 only — not fed into `make_vertical.py`
 
+### 4c-yt. (Optional) Upload the recap to YouTube
+
+Run this step ONLY when the user explicitly asks for it ("upload to youtube",
+"upload the recap", "youtube"). Don't run it proactively — it publishes to
+a public-facing service.
+
+First-time setup (one shot, then cached):
+
+```bash
+python3 ~/.claude/skills/sermon-clips/scripts/youtube_upload.py --setup
+```
+
+This walks through the Google Cloud OAuth setup. Required Python packages:
+`google-api-python-client google-auth-oauthlib google-auth-httplib2`. Install
+with `pip3 install --user` if missing — the script will fail with a clear
+message otherwise.
+
+Per-sermon upload (after `make_sermon_recap.py` has run):
+
+```bash
+cd "$WORK_DIR" && python3 ~/.claude/skills/sermon-clips/scripts/youtube_upload.py
+```
+
+This:
+- Reads `sermon_recap/recap.mp4`, `title.txt`, `description.txt`, `thumbnail.jpg`
+- Uploads as **unlisted** by default (override with `--privacy public|private`)
+- Sets the thumbnail after the video finishes uploading
+- Writes `sermon_recap/youtube.json` with the video ID + watch URL
+
+Flags: `--privacy {public|unlisted|private}`, `--playlist PLxxxx`,
+`--dry-run` (prints payload without calling API).
+
 ### 4d. (Optional) Sync the local transcript to prod
 
 Run this step ONLY when the user explicitly asks for it ("sync transcript",
@@ -329,7 +368,10 @@ downstream work.
 
 ### 7. Curate into edited_clips/
 
-After Descript upload, the user manually reviews clips and moves keepers into `edited_clips/`. Wait for this step before proceeding.
+`upload_to_descript.py` creates an empty `edited_clips/` directory at the end
+of step 6 — so the user can see exactly where keepers should land. After
+Descript review, the user exports keepers into `edited_clips/`. Wait for this
+step before proceeding.
 
 ### 8. Finalize with music + ending slate
 

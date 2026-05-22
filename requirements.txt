@@ -6,3 +6,9 @@ scipy>=1.11
 # Optional but strongly recommended — 3-4x faster CPU transcription for the
 # full sermon. transcribe.sh falls back to plain `whisper` if missing.
 faster-whisper>=1.0
+
+# Required only by youtube_upload.py (opt-in step — upload sermon recap to
+# YouTube). One-time OAuth setup needed; see the script header for details.
+google-api-python-client>=2.100
+google-auth-oauthlib>=1.0
+google-auth-httplib2>=0.2
