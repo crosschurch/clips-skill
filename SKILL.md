@@ -84,21 +84,23 @@ simple-cut upload set).
       │   • Hard cuts only — no within-segment editing
       │   • Horizontal 16:9 (no vertical conversion)
       │
-      ├── youtube_upload.py (optional) ────→ YouTube ▸ recap as unlisted video
+      ├── youtube_upload.py ───────────────→ YouTube ▸ recap as unlisted video
       │   • Uploads sermon_recap/recap.mp4 with title + description + thumbnail
       │   • Default privacy: unlisted (flip to public manually in Studio)
       │   • One-time OAuth setup via `--setup`; refresh token cached at
       │     ~/.config/sermon-clips/youtube-token.json
-      │   • Opt-in only — never runs as part of the automatic pipeline
+      │   • OFFERED by default at the Descript wait point (step 6b) — runs
+      │     in parallel with the user's Descript review
       │
-      ├── sync_transcript.py (optional) ───→ transcripts/<stem>.md   + prod DB
+      ├── sync_transcript.py ──────────────→ transcripts/<stem>.md   + prod DB
       │   • Converts the Whisper JSON to Defuddle-format markdown
       │     (`**MM:SS** · text` per line)
-      │   • Optionally pushes straight to the prod Episode row in the
-      │     crosschurch-new MySQL DB (latest episode needing a
-      │     timestamped transcript; matched by title fuzzy match).
+      │   • Pushes straight to the prod Episode row in the crosschurch-new
+      │     MySQL DB (latest episode needing a timestamped transcript;
+      │     matched by title fuzzy match).
       │   • Stand-in for /sync-church-episode when Defuddle can't fetch
       │     YouTube captions yet (unlisted upload, fresh episode, etc.)
+      │   • OFFERED by default at the Descript wait point (step 6b)
       │
       ├── make_vertical.py ─────────────────→ vertical_clips/*.mp4
       │   (face-tracked 9:16 crop, ranked by virality)
@@ -243,11 +245,12 @@ This:
 - Output: `sermon_recap/recap.mp4` + `sermon_recap/manifest.json`
 - Horizontal 16:9 only — not fed into `make_vertical.py`
 
-### 4c-yt. (Optional) Upload the recap to YouTube
+### 4c-yt. Upload the recap to YouTube
 
-Run this step ONLY when the user explicitly asks for it ("upload to youtube",
-"upload the recap", "youtube"). Don't run it proactively — it publishes to
-a public-facing service.
+This step is offered automatically at the Descript wait point (see "Publish
+phase" between steps 6 and 7) — you don't need an explicit ask each week.
+It's still safe to default-suggest because the privacy is **unlisted**, so
+nothing goes live publicly without a manual flip in Studio.
 
 First-time setup (one shot, then cached):
 
@@ -275,12 +278,13 @@ This:
 Flags: `--privacy {public|unlisted|private}`, `--playlist PLxxxx`,
 `--dry-run` (prints payload without calling API).
 
-### 4d. (Optional) Sync the local transcript to prod
+### 4d. Sync the local transcript to prod
 
-Run this step ONLY when the user explicitly asks for it ("sync transcript",
-"push transcript to prod", "transcribe the episode", or when they mention
-Defuddle hasn't returned captions yet). Don't run it proactively — it
-writes to the production database.
+This step is offered automatically at the Descript wait point alongside the
+YouTube upload (see "Publish phase" between steps 6 and 7). It writes to
+the production DB, but the operation is well-scoped — it only replaces a
+single Episode row's transcript and only on confirmation, so the default-on
+offer is safe.
 
 ```bash
 # Preview (dry run, default — writes the .md but does NOT touch the DB)
@@ -365,6 +369,37 @@ Flags:
 Note: Descript's import API always creates a new project, so re-running this
 step creates a duplicate project. Skip the step if you only want to retry
 downstream work.
+
+### 6b. Publish phase (offered automatically while waiting on curation)
+
+After Descript upload finishes (step 6) and BEFORE waiting on the user to
+populate `edited_clips/` (step 7), use AskUserQuestion to offer both
+"publish" actions in one combined prompt. The Descript review takes the user
+several minutes — these uploads can run in parallel during that wait.
+
+Required pre-check:
+- Recap exists at `sermon_recap/recap.mp4` (skip YouTube offer if missing)
+- Full sermon transcript exists at `transcripts/<full_stem>.json` (skip
+  transcript offer if missing)
+
+Ask one multi-select question along the lines of:
+
+> "Descript upload done — want me to run these while you review clips?"
+>   ☑ Upload recap to YouTube as unlisted
+>   ☑ Push timestamped transcript to prod episode
+
+Both options should default-checked (user can uncheck). If the user picks
+neither, skip straight to step 7.
+
+For the selected items:
+- YouTube: `python3 ~/.claude/skills/sermon-clips/scripts/youtube_upload.py`
+  (uses cached OAuth; if `~/.config/sermon-clips/youtube-token.json` is
+  missing the script will error with the setup instructions — surface that
+  to the user instead of trying to chain `--setup` automatically).
+- Transcript: run `sync_transcript.py` in dry-run mode first; if it finds
+  exactly one candidate episode, present the match (id + title + length
+  delta) and confirm before passing `--push --no-confirm`. If it finds no
+  candidate, ask the user for a `--title` hint to retry.
 
 ### 7. Curate into edited_clips/
 
