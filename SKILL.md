@@ -257,8 +257,8 @@ python3 ~/.claude/skills/sermon-clips/scripts/youtube_upload.py --setup
 
 This walks through the Google Cloud OAuth setup. Required Python packages:
 `google-api-python-client google-auth-oauthlib google-auth-httplib2`. Install
-with `pip3 install --user` if missing — the script will fail with a clear
-message otherwise.
+with `pip3 install --user` (add `--break-system-packages` on homebrew Python
+to bypass PEP 668). The script fails with a clear message if missing.
 
 Per-sermon upload (after `make_sermon_recap.py` has run):
 

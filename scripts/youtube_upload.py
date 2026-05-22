@@ -53,7 +53,9 @@ except ImportError:
     sys.exit(
         "ERROR: missing Google API libraries.\n"
         "Install them with:\n"
-        "  pip3 install --user google-api-python-client google-auth-oauthlib google-auth-httplib2"
+        "  pip3 install --user google-api-python-client google-auth-oauthlib google-auth-httplib2\n"
+        "On homebrew Python (PEP 668), add --break-system-packages:\n"
+        "  pip3 install --user --break-system-packages google-api-python-client google-auth-oauthlib google-auth-httplib2"
     )
 
 CONFIG_DIR = Path.home() / ".config" / "sermon-clips"
