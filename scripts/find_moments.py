@@ -655,6 +655,107 @@ Return ONLY a JSON array of 5 opener candidates, sorted strongest first.
 """
 
 
+CAPTION_PROMPT = """You are writing the Instagram CAPTION for a Cross Church sermon's quote-card carousel. The caption sits below the carousel and converts a scroll into a listen. It follows a strict 5-part structure that the church has used for weeks — DO NOT deviate from the structure, only from the words inside it.
+
+REFERENCE — this is last week's caption (about Jesus saying "have courage, daughter" to the bleeding woman):
+
+---
+HAVE COURAGE, DAUGHTER.
+—
+The miracles that Jesus performed teach us about his authority. But the also teach us about how we should come to Jesus.
+
+Wounded. Weary. Worn.
+
+There is hope. There is healing. We have a home.
+
+If you missed this Sunday, find the episode in our bio or by searching on YT or wherever you get podcasts for "Cross Church Surprise."
+---
+
+STRUCTURE (mandatory — five blocks, each separated by a single blank line):
+
+1. HOOK — one line, ALL CAPS, ends with a period. 3-7 words. Pulled from THIS sermon's punchiest line (the one a stranger would screenshot). Often imperative, declarative, or a direct quote of Jesus from the passage.
+
+2. EM-DASH — literally just the character "—" on its own line. Separator.
+
+3. THEME — 1-2 sentences in normal sentence case. Names what the sermon taught — the central truth, the passage's lesson, or the move Jesus made. Pastoral, not academic.
+
+4. EMOTIONAL TRIPLET — three single words (or very short phrases), each ending in a period, on one line. Captures the human condition this sermon spoke to. Alliterative or rhythmic when possible. Example shape: "Wounded. Weary. Worn." Other shapes: "Tired. Trying. Tangled." "Religious. Restless. Rigid."
+
+5. HOPE PAYOFF — one line, three parallel clauses, each ending in a period. Standard shape: "There is X. There is Y. We have Z." or "There is X. There is Y. There is Z." X/Y/Z are warm gospel words (hope, grace, mercy, healing, peace, freedom, rest, a Savior, a home, Jesus, etc.). Must answer the triplet — if the triplet named the wound, the payoff names the healing.
+
+6. CTA — verbatim, with the sermon's podcast title swapped in:
+   If you missed this Sunday, find the episode in our bio or by searching on YT or wherever you get podcasts for "{podcast_title}".
+
+(Yes, "5 parts" + the CTA = 6 lines/blocks. The em-dash counts as a structural separator, not a content block.)
+
+VOICE NOTES:
+- Warm, pastoral, never marketing-y
+- Sentence-case the theme; the hook is the only ALL CAPS line
+- No emojis, no hashtags
+- Don't reuse last week's wording — match the SHAPE, not the words
+
+SERMON MATERIAL FOR THIS WEEK:
+
+Opener candidates (umbrella themes already validated for this sermon):
+{openers_block}
+
+Top quotes (use these to source the hook + theme + payoff vocabulary):
+{quotes_block}
+
+Top moment titles (for thematic context):
+{moments_block}
+
+Podcast/episode title for the CTA: "{podcast_title}"
+
+Return ONLY the caption text — plain text, exactly the 6 blocks above (hook, em-dash, theme, triplet, payoff, CTA), each separated by a single blank line. No preamble, no JSON, no markdown fences. Pick the single strongest hook from the material; do not return alternates.
+"""
+
+
+DEFAULT_PODCAST_TITLE = "Cross Church Surprise"
+
+
+def generate_caption(quotes, moments, openers, work_dir,
+                     podcast_title=DEFAULT_PODCAST_TITLE):
+    """Ask Claude for a single Instagram caption matching the Cross Church
+    5-block template. Writes viral_clips/caption.txt."""
+    if not quotes and not moments:
+        return ""
+
+    openers_block = "\n".join(f"- {o}" for o in openers[:5]) if openers else "(none)"
+    quotes_block = "\n".join(f"- {q['text']}" for q in quotes[:20]) or "(none)"
+    top_moments = sorted(moments, key=lambda m: m.get("virality_total", 0), reverse=True)[:8]
+    moments_block = "\n".join(f"- {m.get('title', '')}" for m in top_moments) or "(none)"
+
+    prompt = CAPTION_PROMPT.format(
+        openers_block=openers_block,
+        quotes_block=quotes_block,
+        moments_block=moments_block,
+        podcast_title=podcast_title,
+    )
+
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt],
+            capture_output=True,
+            text=True,
+            cwd=work_dir,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        print("  ✗ caption: claude timeout")
+        return ""
+
+    if result.returncode != 0:
+        print(f"  ✗ caption: claude error: {result.stderr[:200]}")
+        return ""
+
+    # The model is asked to return plain text — strip any accidental code fences.
+    text = result.stdout.strip()
+    text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+    text = re.sub(r"\n?```\s*$", "", text)
+    return text.strip()
+
+
 def generate_openers(moments, quotes, work_dir):
     """Ask Claude for 5 carousel-opener candidates that contextualize the quotes.
     The opener is the first carousel slide / caption hook — its job is to give
@@ -873,6 +974,18 @@ def main():
         print(f"✓ Openers: {len(openers)}  →  {openers_path}")
         for i, o in enumerate(openers, 1):
             print(f"  [{i}] {o}")
+
+    # Generate the Instagram caption (Cross Church 5-block template)
+    print(f"\nGenerating Instagram caption...")
+    caption = generate_caption(deduped_quotes, all_moments, openers, WORK_DIR)
+    if caption:
+        caption_path = os.path.join(CLIPS_DIR, "caption.txt")
+        with open(caption_path, "w") as f:
+            f.write(caption + "\n")
+        print(f"✓ Caption  →  {caption_path}")
+        print("─" * 58)
+        print(caption)
+        print("─" * 58)
 
     # Build horizontal highlight reel from top moments' teaser hooks
     # (uses simple-cut moments' teaser timestamps; in --edited mode these come
