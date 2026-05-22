@@ -655,9 +655,9 @@ Return ONLY a JSON array of 5 opener candidates, sorted strongest first.
 """
 
 
-CAPTION_PROMPT = """You are writing the Instagram CAPTION for a Cross Church sermon's quote-card carousel. The caption is NOT a highlight reel of punchy lines — it is the sermon's SPINE, compressed into five blocks. Read the sermon material, identify the sermon's main teaching point (its thesis), the wound it named in the listener, and the gospel resolution it offered. Each block of the caption maps to one of those beats.
+CAPTION_PROMPT = """You are writing the Instagram CAPTION for a Cross Church sermon's quote-card carousel. The caption is a tight, faithful summary of THIS WEEK'S sermon — its spine in five short blocks. Read the actual sermon transcript below; do not template-fill. The caption should feel like someone who heard the message wrote it: it should name what the sermon actually said, in the sermon's own emotional register.
 
-REFERENCE — last week's caption (sermon about the bleeding woman in Mark 5 / Matthew 9):
+REFERENCE — last week's caption (sermon about the bleeding woman in Mark 5 / Matthew 9). This is the SHAPE, not a formula to copy:
 
 ---
 HAVE COURAGE, DAUGHTER.
@@ -671,42 +671,34 @@ There is hope. There is healing. We have a home.
 If you missed this Sunday, find the episode in our bio or by searching on YT or wherever you get podcasts for "Cross Church Surprise."
 ---
 
-HOW LAST WEEK'S CAPTION MAPS TO THAT SERMON'S SPINE:
-- HOOK ("HAVE COURAGE, DAUGHTER.") — Jesus's defining words to the bleeding woman in the passage. The most identifiable line of the entire message.
-- THEME ("The miracles that Jesus performed teach us about his authority. But they also teach us about how we should come to Jesus.") — the sermon's ACTUAL TEACHING POINT. Not a quote from the sermon; the thesis the pastor was making. Two clauses: what we knew + the deeper turn.
-- TRIPLET ("Wounded. Weary. Worn.") — the state of the woman in the passage AND the state of the listener. The sermon's name for the human condition it spoke to.
-- PAYOFF ("There is hope. There is healing. We have a home.") — the gospel answer to the triplet. If the triplet was wounded/weary/worn, the payoff is hope/healing/home. Direct mapping.
-
-YOUR TASK: write THIS week's caption by deriving the same four beats from the sermon material below, then formatting them in the exact same structure. The hook is a defining sermon line (often a quote from Jesus, the passage, or the pastor's central declaration). The theme is the SERMON'S THESIS — what the message was teaching, in pastoral plain language, not a clever line. The triplet names what the listener is carrying. The payoff is the gospel resolution.
-
-STRUCTURE (mandatory — six lines/blocks, each separated by a single blank line):
-
-1. HOOK — one line, ALL CAPS, ends with a period. 3-7 words.
-
-2. EM-DASH — literally just the character "—" on its own line. Separator.
-
-3. THEME — 1-2 sentences in sentence case. The sermon's main teaching point. Often two clauses joined by "But …" / "And …" — the obvious thing the sermon affirmed, plus the deeper turn it made.
-
-4. EMOTIONAL TRIPLET — three single words (each ending in a period), on one line. Names the human condition the sermon spoke to. Alliterative when natural.
-
-5. HOPE PAYOFF — one line, three parallel clauses each ending in a period. Shape: "There is X. There is Y. We have Z." or "There is X. There is Y. There is Z." Each word in the payoff directly answers the corresponding word in the triplet (wounded → healing, etc.).
-
-6. CTA — verbatim:
+WHAT'S FIXED ACROSS EVERY WEEK (do not change):
+- BLOCK 1 = ALL-CAPS HOOK ending in a period. 3-7 words. Pulled directly from this sermon — usually a defining line Jesus said, a command from the passage, or the pastor's central declaration. NOT generic.
+- BLOCK 2 = a single "—" character on its own line.
+- BLOCK 3 = THEME, 1-2 sentences, sentence case. The sermon's THESIS — what it was actually teaching, in pastoral plain words. Should sound like the pastor's voice, not a Bible commentary. Often (not always) two clauses: setup + turn.
+- BLOCK 6 = CTA, VERBATIM:
    If you missed this Sunday, find the episode in our bio or by searching on YT or wherever you get podcasts for "{podcast_title}".
 
-VOICE NOTES:
-- Warm, pastoral, never marketing-y
-- The hook is the only ALL CAPS line — everything else is sentence case
-- No emojis, no hashtags, no series-name in the theme
-- Don't reuse last week's wording — match the SHAPE, not the words
-- Triplet ↔ Payoff must rhyme conceptually. Wounded → healing. Restless → rest. Lost → home. Anxious → peace. Stuck → freedom.
+WHAT FLEXES (let the sermon dictate the shape):
+- BLOCKS 4 AND 5 are the "second half" — the emotional descent and the gospel rise. Last week these happened to be a 3-word triplet + a "There is X. There is Y. We have Z." line. THAT WAS THAT SERMON'S SHAPE. Don't force it onto this one.
+  - Block 4: name the wound / struggle / condition the sermon spoke to. Could be a three-word triplet ("Wounded. Weary. Worn.") OR a single sentence ("We've been building a religion we can manage.") OR a question ("How long have you been performing?") — whatever this sermon actually addressed.
+  - Block 5: the gospel resolution this sermon offered. Could be parallel clauses, a single declaration, a quote from Jesus, an invitation. Whatever the message itself landed on.
+- The two blocks should still rhyme conceptually (wound named in 4, healing named in 5), but they don't have to mirror grammatically.
+- Each block stays one line OR a single tight unit — not a paragraph.
+
+VOICE:
+- Warm, pastoral, never marketing-y. Avoid hashtags, emojis, hype.
+- Do not name the series. Do not mention "this week" inside the caption body (the CTA already does that).
+- Don't reuse phrases from last week's reference. Match the FAITHFULNESS, not the words.
 
 SERMON MATERIAL FOR THIS WEEK:
 
-Carousel opener candidates (umbrella framing already chosen for this sermon — strong signal for what the sermon is ABOUT):
+FULL SERMON TRANSCRIPT (read this first — this is the source of truth for the sermon's actual content, tone, and arc):
+{full_sermon_block}
+
+Carousel opener candidates (umbrella framing already chosen for this sermon):
 {openers_block}
 
-Top moments (each has a title + a one-line "why" — these tell you what the message was teaching, beat by beat):
+Top moments (each title + one-line "why" — the beats of the message):
 {moments_block}
 
 Top quotes (sermon's punchiest standalone lines — useful for hook vocabulary):
@@ -714,30 +706,58 @@ Top quotes (sermon's punchiest standalone lines — useful for hook vocabulary):
 
 Podcast/episode title for the CTA: "{podcast_title}"
 
-Return ONLY the caption text — plain text, exactly the 6 blocks above, each separated by a single blank line. No preamble, no JSON, no markdown fences. Pick the single strongest version; do not return alternates.
+Return ONLY the caption text — plain text, six blocks (hook, em-dash, theme, wound, gospel, CTA), each separated by a single blank line. No preamble, no JSON, no markdown fences, no alternates.
 """
 
 
 DEFAULT_PODCAST_TITLE = "Cross Church Surprise"
+CAPTION_TRANSCRIPT_CHAR_BUDGET = 28000  # ~36-min sermon flattens to ~25-30k chars
+
+
+def _flatten_transcript_for_caption(transcript_path, char_budget=CAPTION_TRANSCRIPT_CHAR_BUDGET):
+    """Read a whisper JSON transcript and flatten to plain prose for the
+    caption prompt. Truncates with a marker if it exceeds char_budget."""
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return ""
+    try:
+        with open(transcript_path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return ""
+    segments = data.get("segments") or []
+    text = " ".join(s.get("text", "").strip() for s in segments if s.get("text"))
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > char_budget:
+        text = text[:char_budget].rsplit(" ", 1)[0] + " […truncated]"
+    return text
 
 
 def generate_caption(quotes, moments, openers, work_dir,
+                     full_transcript_path=None,
                      podcast_title=DEFAULT_PODCAST_TITLE):
-    """Ask Claude for a single Instagram caption matching the Cross Church
-    5-block template. Writes viral_clips/caption.txt."""
+    """Ask Claude for a single Instagram caption that faithfully summarizes
+    this week's sermon. Writes viral_clips/caption.txt.
+
+    `full_transcript_path` is the whisper JSON for the full sermon — when
+    provided, the caption prompt gets the actual sermon text so it can write
+    something tightly coupled with what was preached."""
     if not quotes and not moments:
         return ""
 
     openers_block = "\n".join(f"- {o}" for o in openers[:5]) if openers else "(none)"
-    quotes_block = "\n".join(f"- {q['text']}" for q in quotes[:20]) or "(none)"
-    top_moments = sorted(moments, key=lambda m: m.get("virality_total", 0), reverse=True)[:10]
+    quotes_block = "\n".join(f"- {q['text']}" for q in quotes[:25]) or "(none)"
+    top_moments = sorted(moments, key=lambda m: m.get("virality_total", 0), reverse=True)[:12]
     moments_block = "\n".join(
         f"- {m.get('title', '')}" +
         (f"  ({m['why']})" if m.get("why") else "")
         for m in top_moments
     ) or "(none)"
 
+    full_sermon_text = _flatten_transcript_for_caption(full_transcript_path)
+    full_sermon_block = full_sermon_text if full_sermon_text else "(full transcript not available)"
+
     prompt = CAPTION_PROMPT.format(
+        full_sermon_block=full_sermon_block,
         openers_block=openers_block,
         quotes_block=quotes_block,
         moments_block=moments_block,
@@ -988,7 +1008,14 @@ def main():
 
     # Generate the Instagram caption (Cross Church 5-block template)
     print(f"\nGenerating Instagram caption...")
-    caption = generate_caption(deduped_quotes, all_moments, openers, WORK_DIR)
+    full_transcript_path = None
+    if full_sermon_video:
+        full_stem = os.path.splitext(os.path.basename(full_sermon_video))[0]
+        cand = os.path.join(TRANSCRIPTS_DIR, full_stem + ".json")
+        if os.path.exists(cand):
+            full_transcript_path = cand
+    caption = generate_caption(deduped_quotes, all_moments, openers, WORK_DIR,
+                               full_transcript_path=full_transcript_path)
     if caption:
         caption_path = os.path.join(CLIPS_DIR, "caption.txt")
         with open(caption_path, "w") as f:
