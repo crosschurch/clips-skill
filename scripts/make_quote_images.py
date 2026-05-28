@@ -296,6 +296,18 @@ def render_mixed_hierarchy(text, out_path, palette="light", emphasis=None,
     if not segs:
         segs = [(text, False)]
 
+    # Glue any punctuation-only span (e.g. a trailing "." left over when the
+    # emphasis/punch substring excludes the closing period) onto the previous
+    # span, so it never orphans onto its own line.
+    merged = []
+    for txt, is_huge in segs:
+        if merged and txt and re.fullmatch(r"[.!?,;:…'\"”’)\]]+", txt):
+            ptxt, phuge = merged[-1]
+            merged[-1] = (ptxt + txt, phuge)
+        else:
+            merged.append((txt, is_huge))
+    segs = merged
+
     # Each segment → 1+ lines (UPPER, 1-3 words per line)
     plan = []  # list of (line_text_upper, is_huge)
     for txt, is_huge in segs:
