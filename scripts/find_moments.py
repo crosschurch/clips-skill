@@ -170,16 +170,27 @@ def ask_claude(transcript_text, clip_name, clip_duration):
         transcript=transcript_text,
     )
 
-    result = subprocess.run(
-        ["claude", "-p", prompt],
-        capture_output=True,
-        text=True,
-        cwd=WORK_DIR,
-        timeout=600,
-    )
+    result = None
+    for attempt in range(2):  # one retry — a single hung call must not crash the whole run
+        try:
+            result = subprocess.run(
+                ["claude", "-p", prompt],
+                capture_output=True,
+                text=True,
+                cwd=WORK_DIR,
+                timeout=600,
+            )
+            break
+        except subprocess.TimeoutExpired:
+            if attempt == 0:
+                print("  ⚠ claude timed out after 600s — retrying once...")
+                continue
+            print("  ✗ claude timed out again — skipping this chunk")
+            return [], []
 
-    if result.returncode != 0:
-        print(f"  ✗ claude error: {result.stderr[:200]}")
+    if result is None or result.returncode != 0:
+        err = result.stderr[:200] if result else "no result"
+        print(f"  ✗ claude error: {err}")
         return [], []
 
     response = result.stdout.strip()
@@ -229,11 +240,15 @@ Return ONLY valid JSON:
   ]
 }}"""
 
-    result = subprocess.run(
-        ["claude", "-p", prompt],
-        capture_output=True, text=True,
-        cwd=WORK_DIR, timeout=300,
-    )
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt],
+            capture_output=True, text=True,
+            cwd=WORK_DIR, timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        print("  ✗ edited clips timed out — skipping")
+        return []
     if result.returncode != 0:
         print(f"  ✗ edited clips error: {result.stderr[:200]}")
         return []
