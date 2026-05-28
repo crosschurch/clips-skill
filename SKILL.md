@@ -408,6 +408,11 @@ of step 6 — so the user can see exactly where keepers should land. After
 Descript review, the user exports keepers into `edited_clips/`. Wait for this
 step before proceeding.
 
+IMPORTANT: this Descript review step is where the user **adds captions** to
+each clip. So clips landing in `edited_clips/` are already captioned, and the
+finalized output is post-ready. Do NOT tell the user to add captions afterward
+(see step 9) and do NOT run the optional `add_captions.py` (step 5b).
+
 ### 8. Finalize with music + ending slate
 
 ```bash
@@ -429,7 +434,8 @@ Assets required: `~/Code/crosschurch-new/clipsy/assets/endings/cross_church_endi
 After pipeline completes:
 - List all clips in `final_clips/` with their titles and durations
 - Note any clips that failed or were skipped
-- Remind user: no captions yet — add those in CapCut/DaVinci before posting
+- Clips are post-ready: captions were added during the Descript review step
+  (step 7), music + ending slate added here. No further captioning needed.
 
 ---
 
