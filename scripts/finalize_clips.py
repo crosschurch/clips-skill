@@ -17,7 +17,8 @@ Assets dir resolution order:
   1. $SERMON_CLIPS_ASSETS_DIR (if set)
   2. <repo>/assets (sibling of this script's parent — works when the
      repo is cloned anywhere)
-  3. ~/Code/crosschurch-new/clipsy/assets (legacy default)
+  3. ~/Code/crosschurch/clipsy/assets, then the legacy
+     ~/Code/crosschurch-new/clipsy/assets (the repo's former name)
 The chosen dir must contain endings/cross_church_ending.mp4 and music/*.mp3.
 """
 
@@ -42,7 +43,15 @@ def _resolve_assets_dir():
     )
     if os.path.isdir(repo_assets):
         return repo_assets
-    return os.path.expanduser("~/Code/crosschurch-new/clipsy/assets")
+    # The Laravel repo was renamed crosschurch-new → crosschurch; try both.
+    fallbacks = [
+        os.path.expanduser("~/Code/crosschurch/clipsy/assets"),
+        os.path.expanduser("~/Code/crosschurch-new/clipsy/assets"),
+    ]
+    for path in fallbacks:
+        if os.path.isdir(path):
+            return path
+    return fallbacks[0]
 
 
 ASSETS_DIR = _resolve_assets_dir()

@@ -59,8 +59,10 @@ simple-cut upload set).
       │   default mode:
       │   • 3-6 viral moments per marker clip       (45-70s each)
       │   • full sermon chunked into 4-min windows  (38+ additional clips)
+      │   • cross-source dedupe, then one head-to-head
+      │     re-rank → the true top 10 of the whole sermon
       │   • horizontal highlight reel               (banger statements, 25-35s)
-      │   • → top 10 by virality_total uploaded to Descript
+      │   • → calibrated top 10 uploaded to Descript
       │   --edited mode (opt-in via initial prompt):
       │   • 3-5 edited clips per marker clip        (multi-segment, fluff cut)
       │   • full sermon clips still produced
@@ -78,26 +80,19 @@ simple-cut upload set).
       │   • Bundled fonts (skill `fonts/` dir) — no install needed
       │   • Flags: --attribution, --style <name>, --all-styles
       │
-      ├── make_sermon_recap.py ─────────────→ sermon_recap/recap.mp4
-      │   • 8-12 min long-form recap of the full sermon (Furtick-style)
-      │   • One Claude call picks 5-10 structural segments (beginning/middle/end)
-      │   • Hard cuts only — no within-segment editing
-      │   • Horizontal 16:9 (no vertical conversion)
-      │
-      ├── youtube_upload.py ───────────────→ YouTube ▸ recap as unlisted video
-      │   • Uploads sermon_recap/recap.mp4 with title + description + thumbnail
-      │   • Default privacy: unlisted (flip to public manually in Studio)
-      │   • One-time OAuth setup via `--setup`; refresh token cached at
-      │     ~/.config/sermon-clips/youtube-token.json
-      │   • OFFERED by default at the Descript wait point (step 6b) — runs
-      │     in parallel with the user's Descript review
-      │
       ├── sync_transcript.py ──────────────→ transcripts/<stem>.md   + prod DB
       │   • Converts the Whisper JSON to Defuddle-format markdown
       │     (`**MM:SS** · text` per line)
-      │   • Pushes straight to the prod Episode row in the crosschurch-new
+      │   • Pushes straight to the prod Episode row in the Cross Church
       │     MySQL DB (latest episode needing a timestamped transcript;
       │     matched by title fuzzy match).
+      │   • Then fills the episode `ai_summary` AND `study_guide` IF MISSING,
+      │     via the site's own YouTubeService::generateSummaryOnly /
+      │     generateStudyGuideOnly (the same generators the scheduled web-side
+      │     sync uses). The scheduled sync stays the source of truth and only
+      │     fills empty fields; this is a fill-the-gap safety net for when the
+      │     transcript is pushed here before that sync runs — existing values
+      │     are never clobbered. Skip with --no-summary / --no-study-guide.
       │   • Stand-in for /sync-church-episode when Defuddle can't fetch
       │     YouTube captions yet (unlisted upload, fresh episode, etc.)
       │   • OFFERED by default at the Descript wait point (step 6b)
@@ -122,7 +117,7 @@ simple-cut upload set).
           • music ramps to full volume as ending fades in
           • sermon audio fades out over crossfade
           • Cross Church ending slate appended (1s xfade)
-          Assets: ~/Code/crosschurch-new/clipsy/assets/
+          Assets: ~/Code/crosschurch/clipsy/assets/
             endings/cross_church_ending.mp4
             music/*.mp3  (10 tracks, shuffled per clip)
 ```
@@ -193,6 +188,44 @@ pass (independent of clip selection — pure text suitable for social quote
 cards). Quotes are deduped across marker clips + full sermon and written to
 `viral_clips/quotes.json`.
 
+### 4a. How the top 10 is chosen
+
+**The goal is the 10 best moments in the whole sermon.** A marker is a hint
+that good content is probably nearby — never a guarantee, and never a reserved
+slot. Marker candidates compete on equal footing with everything else.
+
+After all sources are cut, `find_moments.py` runs two whole-sermon passes:
+
+**1. Cross-source dedupe.** The same moment routinely gets cut twice — once
+from the marker clip, once from the full sermon — and without this it occupies
+two of the ten slots.
+
+Timeline comparison cannot catch this. A marker filename encodes an offset into
+the *OBS recording* (e.g. `01-00-49` → 3649s of an 87-min file) while
+full-sermon timestamps are relative to the *sermon export* (0–2302s of a 38-min
+file). Different files, different zero points. So dedupe compares **transcript
+text** (5-gram containment ≥ `DEDUPE_THRESHOLD`), which is source-agnostic.
+Containment rather than Jaccard, so a short cut nested inside a longer one
+still reads as a duplicate.
+
+Winner is the higher `virality_total`; ties go to the full sermon, whose
+boundaries aren't constrained by the edges of a marker window. Losers stay in
+`moments.json` tagged with `duplicate_of` rather than being deleted.
+
+**2. Head-to-head calibration.** Per-chunk scores come from independent Claude
+calls that never see each other's candidates, so an 85 from a weak stretch can
+outrank an 80 from a strong one — `virality_total` is **not** comparable across
+chunks. One final call puts the top `CALIBRATION_POOL` (20) candidates side by
+side and ranks them, stamping a 1-based `rank` on the winners. The prompt tells
+the model to ignore the incoming scores and to give marker-sourced candidates
+no advantage.
+
+Both passes degrade safely: on timeout, non-zero exit, or unparseable JSON the
+run continues and everything falls back to `virality_total` order.
+
+Tunable at the top of `find_moments.py`: `FINAL_TOP_N`, `CALIBRATION_POOL`,
+`DEDUPE_THRESHOLD`.
+
 ### 4b. Render quote-card images
 
 ```bash
@@ -224,67 +257,12 @@ These are independent of the video pipeline — safe to run any time after
 `find_moments.py`. No Descript upload step; quote images are intended for
 direct posting to Instagram feed.
 
-### 4c. Build long-form sermon recap
-
-```bash
-cd "$WORK_DIR" && python3 ~/.claude/skills/sermon-clips/scripts/make_sermon_recap.py
-
-# Override target length:
-python3 ~/.claude/skills/sermon-clips/scripts/make_sermon_recap.py --target-minutes 11
-```
-
-Always run this step — it produces the 8-12 min Furtick-style long-form recap
-(the "meat and potatoes" of the sermon with a clear beginning, middle, end).
-
-This:
-- Finds the full sermon MP4 + its transcript
-- Asks Claude (one call) for 5-10 large structural segments (60-180s each,
-  total 8-12 min) that form a complete sermon arc
-- Cuts each segment with re-encode (so concat is clean), then stream-copy concats
-- Hard cuts only — no within-segment trimming. Pauses and natural pacing stay in.
-- Output: `sermon_recap/recap.mp4` + `sermon_recap/manifest.json`
-- Horizontal 16:9 only — not fed into `make_vertical.py`
-
-### 4c-yt. Upload the recap to YouTube
+### 4c. Sync the local transcript to prod
 
 This step is offered automatically at the Descript wait point (see "Publish
-phase" between steps 6 and 7) — you don't need an explicit ask each week.
-It's still safe to default-suggest because the privacy is **unlisted**, so
-nothing goes live publicly without a manual flip in Studio.
-
-First-time setup (one shot, then cached):
-
-```bash
-python3 ~/.claude/skills/sermon-clips/scripts/youtube_upload.py --setup
-```
-
-This walks through the Google Cloud OAuth setup. Required Python packages:
-`google-api-python-client google-auth-oauthlib google-auth-httplib2`. Install
-with `pip3 install --user` (add `--break-system-packages` on homebrew Python
-to bypass PEP 668). The script fails with a clear message if missing.
-
-Per-sermon upload (after `make_sermon_recap.py` has run):
-
-```bash
-cd "$WORK_DIR" && python3 ~/.claude/skills/sermon-clips/scripts/youtube_upload.py
-```
-
-This:
-- Reads `sermon_recap/recap.mp4`, `title.txt`, `description.txt`, `thumbnail.jpg`
-- Uploads as **unlisted** by default (override with `--privacy public|private`)
-- Sets the thumbnail after the video finishes uploading
-- Writes `sermon_recap/youtube.json` with the video ID + watch URL
-
-Flags: `--privacy {public|unlisted|private}`, `--playlist PLxxxx`,
-`--dry-run` (prints payload without calling API).
-
-### 4d. Sync the local transcript to prod
-
-This step is offered automatically at the Descript wait point alongside the
-YouTube upload (see "Publish phase" between steps 6 and 7). It writes to
-the production DB, but the operation is well-scoped — it only replaces a
-single Episode row's transcript and only on confirmation, so the default-on
-offer is safe.
+phase" between steps 6 and 7). It writes to the production DB, but the
+operation is well-scoped — it only replaces a single Episode row's transcript
+and only on confirmation, so the default-on offer is safe.
 
 ```bash
 # Preview (dry run, default — writes the .md but does NOT touch the DB)
@@ -299,15 +277,23 @@ This:
 - Converts to Defuddle-format markdown (`**MM:SS** · text` per segment)
 - Writes `transcripts/<stem>.md`
 - (`--push`) Connects to the prod MySQL DB via `php artisan tinker` in
-  `~/Code/crosschurch-new` (or `$CROSSCHURCH_DIR`)
+  `~/Code/crosschurch` (or `$CROSSCHURCH_DIR`)
 - Finds the latest episode whose title fuzzy-matches the sermon's file
   stem AND has no timestamped transcript yet
 - Confirms before writing (skip with `--no-confirm`)
+- After the push, fills the episode `ai_summary` and `study_guide` **only if
+  they're missing**, via the site's own `YouTubeService::generateSummaryOnly`
+  and `generateStudyGuideOnly` — the same generators the scheduled web-side
+  sync uses. The scheduled sync remains the source of truth (it selects rows
+  with empty fields); this is just a fill-the-gap safety net for when the
+  transcript is pushed here first. Existing summaries/guides are left untouched.
+  Skip with `--no-summary` / `--no-study-guide`.
 
 Use this when the YouTube video's captions haven't generated yet, so
 `/sync-church-episode` would otherwise be blocked on Defuddle.
 
-Flags: `--episode-id N`, `--title "..."`, `--no-confirm`, `--stdout`.
+Flags: `--episode-id N`, `--title "..."`, `--no-confirm`, `--no-summary`,
+`--no-study-guide`, `--stdout`.
 
 ### 5. Convert to vertical 9:16
 
@@ -353,8 +339,9 @@ cd "$WORK_DIR" && python3 ~/.claude/skills/sermon-clips/scripts/upload_to_descri
 
 This:
 - Auto-detects edited mode: if `vertical_clips/edited_*_vertical.mp4` files
-  exist, uploads all of them. Otherwise picks the top 10 by `virality_total`
-  from `viral_clips/moments.json`.
+  exist, uploads all of them. Otherwise picks the top 10 from
+  `viral_clips/moments.json` by the calibrated `rank` field, falling back to
+  `virality_total` for older manifests that predate the calibration pass.
 - Creates **one new Descript project per clip** inside the
   **Cross Church** folder (e.g. "Sermon 0419 — 01. Demons Had Better Theology")
 - Uses the token at `~/.config/sermon-clips/descript.env`
@@ -373,33 +360,24 @@ downstream work.
 ### 6b. Publish phase (offered automatically while waiting on curation)
 
 After Descript upload finishes (step 6) and BEFORE waiting on the user to
-populate `edited_clips/` (step 7), use AskUserQuestion to offer both
-"publish" actions in one combined prompt. The Descript review takes the user
-several minutes — these uploads can run in parallel during that wait.
+populate `edited_clips/` (step 7), offer to push the timestamped transcript
+to prod while the user reviews clips. The Descript review takes the user
+several minutes — this can run in parallel during that wait.
 
 Required pre-check:
-- Recap exists at `sermon_recap/recap.mp4` (skip YouTube offer if missing)
-- Full sermon transcript exists at `transcripts/<full_stem>.json` (skip
-  transcript offer if missing)
+- Full sermon transcript exists at `transcripts/<full_stem>.json` (skip the
+  offer if missing)
 
-Ask one multi-select question along the lines of:
+Ask the user (default yes):
 
-> "Descript upload done — want me to run these while you review clips?"
->   ☑ Upload recap to YouTube as unlisted
->   ☑ Push timestamped transcript to prod episode
+> "Descript upload done — want me to push the timestamped transcript to the
+> prod episode while you review clips?"
 
-Both options should default-checked (user can uncheck). If the user picks
-neither, skip straight to step 7.
-
-For the selected items:
-- YouTube: `python3 ~/.claude/skills/sermon-clips/scripts/youtube_upload.py`
-  (uses cached OAuth; if `~/.config/sermon-clips/youtube-token.json` is
-  missing the script will error with the setup instructions — surface that
-  to the user instead of trying to chain `--setup` automatically).
-- Transcript: run `sync_transcript.py` in dry-run mode first; if it finds
-  exactly one candidate episode, present the match (id + title + length
-  delta) and confirm before passing `--push --no-confirm`. If it finds no
-  candidate, ask the user for a `--title` hint to retry.
+If the user declines, skip straight to step 7. If they accept:
+- Run `sync_transcript.py` in dry-run mode first; if it finds exactly one
+  candidate episode, present the match (id + title + length delta) and
+  confirm before passing `--push --no-confirm`. If it finds no candidate,
+  ask the user for a `--title` hint to retry.
 
 ### 7. Curate into edited_clips/
 
@@ -427,7 +405,8 @@ This:
 - Re-encodes with VideoToolbox (hardware accelerated) at 8 Mbps
 - Saves to `final_clips/`
 
-Assets required: `~/Code/crosschurch-new/clipsy/assets/endings/cross_church_ending.mp4` and `music/*.mp3`
+Assets required: `~/Code/crosschurch/clipsy/assets/endings/cross_church_ending.mp4` and `music/*.mp3`
+(override with `$SERMON_CLIPS_ASSETS_DIR`)
 
 ### 9. Report results
 

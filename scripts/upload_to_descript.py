@@ -109,10 +109,17 @@ def project_name_from_cwd() -> str:
 
 
 def pick_moments(moments: list[dict], limit: int | None) -> list[dict]:
+    # find_moments.py runs a whole-sermon calibration pass and stamps a 1-based
+    # "rank" on the winners. Honour it when present: per-chunk virality_total
+    # scores come from independent Claude calls and are not comparable to each
+    # other, so sorting on them alone gives a misleading "top N".
     ranked = sorted(
         moments,
-        key=lambda m: m.get("virality_total", 0),
-        reverse=True,
+        key=lambda m: (
+            m.get("rank") is None,
+            m.get("rank") or 0,
+            -m.get("virality_total", 0),
+        ),
     )
     return ranked if limit is None else ranked[:limit]
 

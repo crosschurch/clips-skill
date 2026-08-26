@@ -18,43 +18,46 @@ CLIPS=(*_marker_*.mp4)
 shopt -u nullglob
 
 if [ ${#CLIPS[@]} -eq 0 ]; then
+    # No marker clips is fine: the user may have prepared a full sermon
+    # video/audio directly (no OBS markers). Skip the marker loop and fall
+    # through to the full-sermon section below.
     echo "No *_marker_*.mp4 clips found in: $WORK_DIR"
-    echo "Run extract_segments.py first to generate marker clips."
-    exit 1
-fi
-
-echo "Found ${#CLIPS[@]} marker clip(s) in: $WORK_DIR"
-echo "Transcripts dir: $TRANSCRIPTS_DIR"
-echo ""
-
-for clip in "${CLIPS[@]}"; do
-    stem="${clip%.mp4}"
-    transcript="$TRANSCRIPTS_DIR/${stem}.json"
-
-    if [ -f "$transcript" ]; then
-        echo "✓ Already transcribed: $clip"
-        continue
-    fi
-
-    echo "▶ Transcribing: $clip"
-    whisper "$clip" \
-        --model medium \
-        --language en \
-        --output_format json \
-        --output_dir "$TRANSCRIPTS_DIR" \
-        --word_timestamps True \
-        --verbose False
-
-    if [ $? -eq 0 ]; then
-        echo "  ✓ Done"
-    else
-        echo "  ✗ Failed — whisper exited with error"
-    fi
+    echo "Skipping marker-clip transcription; looking for a full sermon below."
     echo ""
-done
+else
+    echo "Found ${#CLIPS[@]} marker clip(s) in: $WORK_DIR"
+    echo "Transcripts dir: $TRANSCRIPTS_DIR"
+    echo ""
 
-echo "Transcription complete."
-echo "Transcripts saved to: $TRANSCRIPTS_DIR"
+    for clip in "${CLIPS[@]}"; do
+        stem="${clip%.mp4}"
+        transcript="$TRANSCRIPTS_DIR/${stem}.json"
+
+        if [ -f "$transcript" ]; then
+            echo "✓ Already transcribed: $clip"
+            continue
+        fi
+
+        echo "▶ Transcribing: $clip"
+        whisper "$clip" \
+            --model medium \
+            --language en \
+            --output_format json \
+            --output_dir "$TRANSCRIPTS_DIR" \
+            --word_timestamps True \
+            --verbose False
+
+        if [ $? -eq 0 ]; then
+            echo "  ✓ Done"
+        else
+            echo "  ✗ Failed — whisper exited with error"
+        fi
+        echo ""
+    done
+
+    echo "Marker-clip transcription complete."
+    echo "Transcripts saved to: $TRANSCRIPTS_DIR"
+fi
 
 # ── Full sermon ──────────────────────────────────────────────────────────────
 # Detect: any MP4 >10 minutes that is not a marker clip or OBS recording

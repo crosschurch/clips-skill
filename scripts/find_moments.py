@@ -538,6 +538,7 @@ def process_full_sermon(video_path, transcript_path, clips_dir):
                     'teaser_end': chunk_start + float(te) if te is not None else None,
                     'file': os.path.basename(out),
                     'vertical_file': None,
+                    'text': segment_text_between(chunk_segs, abs_start, abs_end),
                     'source_type': 'full_sermon',
                 })
             else:
@@ -857,10 +858,193 @@ def overlaps(abs_start, abs_end, accepted, threshold=0.5):
     return False
 
 
+FINAL_TOP_N = 10          # size of the curated "best of the sermon" set
+CALIBRATION_POOL = 20     # candidates sent to the head-to-head re-rank
+DEDUPE_THRESHOLD = 0.35   # 5-gram containment above which two cuts are "the same moment"
+
+
+def segment_text_between(segments, start, end):
+    """Concatenate transcript text for segments overlapping [start, end]."""
+    out = []
+    for s in segments:
+        s_start = float(s.get("start", 0))
+        s_end = float(s.get("end", s_start))
+        if s_end > start and s_start < end:
+            out.append(str(s.get("text", "")).strip())
+    return " ".join(t for t in out if t).strip()
+
+
+def _norm_words(text):
+    return [w for w in re.sub(r"[^a-z0-9\s]", " ", (text or "").lower()).split() if w]
+
+
+def text_similarity(a, b, n=5):
+    """
+    Containment of 5-gram shingles, 0..1.
+
+    Containment (divide by the SMALLER set) rather than Jaccard: the same
+    moment is often cut at two different lengths, and a shorter cut fully
+    inside a longer one should still read as a duplicate.
+    """
+    wa, wb = _norm_words(a), _norm_words(b)
+    if len(wa) < n + 3 or len(wb) < n + 3:
+        return 0.0
+    sa = {tuple(wa[i:i + n]) for i in range(len(wa) - n + 1)}
+    sb = {tuple(wb[i:i + n]) for i in range(len(wb) - n + 1)}
+    if not sa or not sb:
+        return 0.0
+    return len(sa & sb) / min(len(sa), len(sb))
+
+
+def dedupe_across_sources(moments):
+    """
+    Collapse the same sermon moment when it was cut from more than one source.
+
+    Marker clips and the full sermon are DIFFERENT files with different zero
+    points — a marker filename encodes its offset in the OBS recording, while
+    full-sermon timestamps are relative to the sermon export — so timeline
+    overlap is meaningless across sources. Compare transcript text instead,
+    which is source-agnostic.
+
+    Winner: higher virality_total; ties go to the full sermon, whose
+    boundaries are not constrained by the edges of a marker window.
+
+    Returns (kept, dropped).
+    """
+    ordered = sorted(
+        moments,
+        key=lambda x: (-x.get("virality_total", 0),
+                       0 if x.get("source_type") == "full_sermon" else 1),
+    )
+    kept, dropped = [], []
+    for m in ordered:
+        dup_of = None
+        for k in kept:
+            if text_similarity(m.get("text", ""), k.get("text", "")) >= DEDUPE_THRESHOLD:
+                dup_of = k
+                break
+        if dup_of is None:
+            kept.append(m)
+        else:
+            m["duplicate_of"] = dup_of.get("file")
+            dropped.append(m)
+    return kept, dropped
+
+
+def calibrate_ranking(moments, top_n=FINAL_TOP_N, pool=CALIBRATION_POOL):
+    """
+    Re-rank the strongest candidates head-to-head in ONE Claude call.
+
+    Per-chunk scores come from independent calls that never see each other's
+    candidates, so an 85 from a weak stretch can outrank an 80 from a strong
+    one. This pass puts the top `pool` candidates in front of a single call so
+    the final `top_n` reflects the whole sermon rather than per-chunk luck.
+
+    A marker clip is a hint about where good content probably lives, never a
+    guarantee — marker candidates compete here on equal footing.
+
+    Mutates `moments`, setting 1-based "rank" on the winners. On any failure
+    the list is left untouched and callers fall back to virality_total order.
+    """
+    if not moments:
+        return moments
+
+    candidates = sorted(moments, key=lambda m: m.get("virality_total", 0), reverse=True)[:pool]
+    if len(candidates) <= 1:
+        for i, m in enumerate(candidates):
+            m["rank"] = i + 1
+        return moments
+
+    lines = []
+    for i, m in enumerate(candidates):
+        excerpt = (m.get("text", "") or "")[:700]
+        lines.append(
+            f"[{i}] title: {m.get('title', '')}\n"
+            f"     duration: {m.get('duration', 0):.0f}s | source: {m.get('source_type', 'unknown')}"
+            f" | per-chunk score: {m.get('virality_total', 0)}\n"
+            f"     hook: {m.get('hook', '')}\n"
+            f"     why: {m.get('why', '')}\n"
+            f"     transcript: {excerpt}"
+        )
+
+    prompt = f"""You are choosing the {top_n} strongest short-form video clips from ONE sermon.
+
+Below are {len(candidates)} candidate moments. Each was scored earlier by a
+separate pass that could only see its own slice of the sermon, so the
+"per-chunk score" is NOT comparable between candidates. Ignore it as a ranking
+and judge the candidates against each other on their own merits.
+
+Some candidates came from a "marker" source (a spot the pastor flagged live).
+That is a weak hint that good content may be nearby — treat it as no advantage
+whatsoever when ranking. Judge only the content.
+
+Rank on: strength of the opening hook, whether the moment stands alone without
+sermon context, emotional or intellectual payoff, quotability, and whether it
+resolves rather than trailing off.
+
+Prefer variety — avoid filling the list with near-identical points. If two
+candidates make substantially the same point, keep only the stronger.
+
+Return ONLY valid JSON, no markdown, no explanation:
+{{"ranked": [<candidate index>, <candidate index>, ...]}}
+
+List exactly {min(top_n, len(candidates))} indices, strongest first, drawn from 0..{len(candidates) - 1}.
+
+CANDIDATES:
+{chr(10).join(lines)}"""
+
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt],
+            capture_output=True, text=True, cwd=WORK_DIR, timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        print("  ⚠ calibration timed out — falling back to per-chunk score order")
+        return moments
+    if result.returncode != 0:
+        print(f"  ⚠ calibration error: {result.stderr[:160]} — falling back to score order")
+        return moments
+
+    match = re.search(r"\{[\s\S]*\}", result.stdout.strip())
+    if not match:
+        print("  ⚠ calibration returned no JSON — falling back to score order")
+        return moments
+    try:
+        order = json.loads(match.group(0)).get("ranked", [])
+    except json.JSONDecodeError as e:
+        print(f"  ⚠ calibration JSON parse ({e}) — falling back to score order")
+        return moments
+
+    seen, rank = set(), 0
+    for idx in order:
+        if not isinstance(idx, int) or idx < 0 or idx >= len(candidates) or idx in seen:
+            continue
+        seen.add(idx)
+        rank += 1
+        candidates[idx]["rank"] = rank
+        if rank >= top_n:
+            break
+
+    if rank == 0:
+        print("  ⚠ calibration produced no usable indices — falling back to score order")
+    else:
+        print(f"  ✓ calibrated top {rank} across {len(candidates)} candidates")
+    return moments
+
+
+
 def main():
     transcript_files = sorted(glob.glob(os.path.join(TRANSCRIPTS_DIR, "*_marker_*.json")))
 
-    if not transcript_files:
+    # Full-sermon-only workflows (no OBS markers) have no marker transcripts.
+    # Don't bail in that case as long as a full sermon video + transcript exist.
+    _full_check = find_full_sermon_video(WORK_DIR)
+    _full_has_transcript = False
+    if _full_check:
+        _fs = os.path.splitext(os.path.basename(_full_check))[0]
+        _full_has_transcript = os.path.exists(os.path.join(TRANSCRIPTS_DIR, _fs + ".json"))
+
+    if not transcript_files and not _full_has_transcript:
         print(f"No transcripts found in: {TRANSCRIPTS_DIR}")
         print("Run transcribe.sh first.")
         sys.exit(1)
@@ -976,6 +1160,10 @@ def main():
                     "teaser_end": m.get("teaser_end"),
                     "file": os.path.basename(out),
                     "vertical_file": None,
+                    # Text is what makes this moment comparable to cuts from
+                    # other sources — marker and sermon timelines don't align.
+                    "text": segment_text_between(segments, start, end),
+                    "source_type": "marker",
                 })
             else:
                 print(f"       ✗ Cut failed")
@@ -993,6 +1181,30 @@ def main():
         else:
             print(f"\n⚠ Full sermon found ({os.path.basename(full_sermon_video)}) but no transcript.")
             print(f"  Run transcribe.sh to generate: transcripts/{full_stem}.json")
+
+    # ── Whole-sermon curation ────────────────────────────────────────────
+    # Everything above ran per-source and per-chunk. These two passes are the
+    # only place the sermon is considered as a whole.
+    if all_moments:
+        print(f"\n{'='*58}")
+        print("Curating across the whole sermon")
+
+        before = len(all_moments)
+        all_moments, dropped = dedupe_across_sources(all_moments)
+        if dropped:
+            print(f"  ✓ dropped {before - len(all_moments)} cross-source duplicate(s):")
+            for d in dropped:
+                print(f"      - {d.get('title','')} [{d.get('source_type','?')}]"
+                      f" dup of {d.get('duplicate_of','?')}")
+        else:
+            print("  ✓ no cross-source duplicates found")
+
+        print(f"  Ranking top {FINAL_TOP_N} head-to-head...")
+        calibrate_ranking(all_moments, top_n=FINAL_TOP_N)
+
+    # Ranked moments first (calibrated order), then the rest by raw score.
+    all_moments.sort(key=lambda m: (m.get("rank") is None, m.get("rank") or 0,
+                                    -m.get("virality_total", 0)))
 
     # Write manifest
     manifest = os.path.join(CLIPS_DIR, "moments.json")

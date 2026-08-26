@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Convert the local Whisper transcript to Defuddle-format markdown and
-optionally push it to the prod Episode row in the crosschurch-new MySQL DB.
+optionally push it to the prod Episode row in the Cross Church MySQL DB.
 
 Background: Cross Church episodes store their YouTube transcript in
 `episodes.transcription_text` as markdown with clickable timestamps
@@ -42,8 +42,9 @@ path. If they diverge (you're catching up several weeks), use --title
 or --episode-id to disambiguate.
 
 Configuration:
-    $CROSSCHURCH_DIR — path to the crosschurch-new Laravel repo.
-                        Defaults to ~/Code/crosschurch-new.
+    $CROSSCHURCH_DIR — path to the Cross Church Laravel repo.
+                        Defaults to ~/Code/crosschurch, falling back to the
+                        legacy ~/Code/crosschurch-new.
 """
 
 import argparse
@@ -55,9 +56,22 @@ import subprocess
 import sys
 import tempfile
 
-CROSSCHURCH_DIR = os.path.expanduser(
-    os.environ.get("CROSSCHURCH_DIR", "~/Code/crosschurch-new")
-)
+def _resolve_crosschurch_dir():
+    env = os.environ.get("CROSSCHURCH_DIR")
+    if env:
+        return os.path.expanduser(env)
+    # The repo was renamed crosschurch-new → crosschurch; try both.
+    candidates = [
+        os.path.expanduser("~/Code/crosschurch"),
+        os.path.expanduser("~/Code/crosschurch-new"),
+    ]
+    for path in candidates:
+        if os.path.isfile(os.path.join(path, "artisan")):
+            return path
+    return candidates[0]
+
+
+CROSSCHURCH_DIR = _resolve_crosschurch_dir()
 
 
 # ─── Find the full sermon transcript ────────────────────────────────────────
@@ -159,6 +173,15 @@ def run_tinker(php_code):
     return r.stdout, r.stderr, r.returncode
 
 
+def php_single_quoted(value):
+    """Return `value` as a safe PHP single-quoted string literal (quotes
+    included). Escapes backslashes and single quotes so paths/titles that
+    contain an apostrophe — e.g. "god's failing people.md" — don't break the
+    generated PHP."""
+    escaped = str(value).replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{escaped}'"
+
+
 def find_target_episode(stem_hint=None, title=None, episode_id=None):
     """Resolve which prod episode to update. Returns a dict or None."""
     if episode_id:
@@ -182,9 +205,9 @@ def find_target_episode(stem_hint=None, title=None, episode_id=None):
             "->orWhereRaw(\"transcription_text NOT LIKE '%**%:%**%'\"); })"
         )
         if title or stem_hint:
-            t = (title or stem_hint or "").strip()
-            t = t.replace("'", "\\'")
-            t = t[:120]
+            # Truncate before escaping so a cut can't sever a "\'" escape.
+            t = (title or stem_hint or "").strip()[:120]
+            t = t.replace("\\", "\\\\").replace("'", "\\'")
             title_clause = f"->where('title', 'like', '%{t}%')"
         else:
             title_clause = ""
@@ -232,7 +255,7 @@ def push_transcript(episode_id, md_path):
     php = (
         f"$ep = App\\Models\\Episode::on('prod')->find({int(episode_id)});\n"
         f"if (!$ep) {{ echo 'EPISODE_NOT_FOUND'; exit; }}\n"
-        f"$ep->transcription_text = file_get_contents('{md_path}');\n"
+        f"$ep->transcription_text = file_get_contents({php_single_quoted(md_path)});\n"
         "$ep->save();\n"
         "echo json_encode([\n"
         "    'saved' => true,\n"
@@ -256,6 +279,98 @@ def push_transcript(episode_id, md_path):
         return False, f"JSON parse error:\n{out[:400]}"
 
 
+def generate_summary(episode_id):
+    """Fill in the episode's ai_summary IF MISSING, using the site's own
+    YouTubeService::generateSummaryOnly — the same generator the normal
+    Defuddle / scheduled web-side sync uses. The scheduled sync remains the
+    source of truth (it selects episodes `whereNull('ai_summary')`); this is a
+    fill-the-gap safety net for when we push the transcript directly here before
+    that sync has run. If a summary already exists it is left untouched.
+    Returns (ok, result_dict_or_error); result has 'existed' True when skipped."""
+    php = (
+        f"$ep = App\\Models\\Episode::on('prod')->find({int(episode_id)});\n"
+        f"if (!$ep) {{ echo 'EPISODE_NOT_FOUND'; exit; }}\n"
+        "if (empty($ep->transcription_text)) { echo 'NO_TRANSCRIPT'; exit; }\n"
+        "if (!empty($ep->ai_summary)) {\n"
+        "    echo json_encode(['existed' => true,\n"
+        "        'summary_len' => strlen((string) $ep->ai_summary),\n"
+        "        'summary' => (string) $ep->ai_summary]);\n"
+        "    exit;\n"
+        "}\n"
+        "(new App\\Services\\YouTubeService())->generateSummaryOnly($ep);\n"
+        f"$ep2 = App\\Models\\Episode::on('prod')->find({int(episode_id)});\n"
+        "echo json_encode([\n"
+        "    'existed' => false,\n"
+        "    'summary_len' => strlen((string) $ep2->ai_summary),\n"
+        "    'summary' => (string) $ep2->ai_summary,\n"
+        "]);\n"
+    )
+    # Parse the output BEFORE trusting the exit code: tinker returns rc=1
+    # whenever the PHP calls exit(), which our early-return branches do even on
+    # success (e.g. the "already exists" skip). So sentinels/JSON win.
+    out, err, rc = run_tinker(php)
+    if "EPISODE_NOT_FOUND" in out:
+        return False, f"Episode {episode_id} not found on prod"
+    if "NO_TRANSCRIPT" in out:
+        return False, "Episode has no transcript to summarize"
+    m = re.search(r"\{[\s\S]*\}", out)
+    if m:
+        try:
+            return True, json.loads(m.group(0))
+        except json.JSONDecodeError:
+            pass
+    return False, (err.strip() or out.strip() or f"tinker rc={rc}")[:400]
+
+
+def generate_study_guide(episode_id):
+    """Fill in the episode's study_guide IF MISSING, using the site's own
+    YouTubeService::generateStudyGuideOnly — the same generator the normal
+    episode-enhancement / scheduled web-side sync uses. The scheduled sync stays
+    the source of truth; this is a fill-the-gap safety net for when we push the
+    transcript directly here before that sync has run. If a study guide already
+    exists it is left untouched. Returns (ok, result_dict_or_error); result has
+    'existed' True when skipped.
+
+    Note: generateStudyGuideOnly optionally enriches with a matched SermonNote.
+    That lookup resolves on the default DB connection (not 'prod'), so over this
+    cross-connection tinker it simply finds no note and degrades to a
+    transcript-only guide — non-destructive. The save() still targets prod
+    because the episode was loaded via ::on('prod')."""
+    php = (
+        f"$ep = App\\Models\\Episode::on('prod')->find({int(episode_id)});\n"
+        f"if (!$ep) {{ echo 'EPISODE_NOT_FOUND'; exit; }}\n"
+        "if (empty($ep->transcription_text)) { echo 'NO_TRANSCRIPT'; exit; }\n"
+        "if (is_array($ep->study_guide) && count($ep->study_guide) > 0) {\n"
+        "    echo json_encode(['existed' => true,\n"
+        "        'has_guide' => true,\n"
+        "        'sections' => array_keys($ep->study_guide)]);\n"
+        "    exit;\n"
+        "}\n"
+        "(new App\\Services\\YouTubeService())->generateStudyGuideOnly($ep);\n"
+        f"$ep2 = App\\Models\\Episode::on('prod')->find({int(episode_id)});\n"
+        "$sg = $ep2->study_guide;\n"
+        "echo json_encode([\n"
+        "    'existed' => false,\n"
+        "    'has_guide' => is_array($sg) && count($sg) > 0,\n"
+        "    'sections' => is_array($sg) ? array_keys($sg) : [],\n"
+        "]);\n"
+    )
+    # Parse output before trusting rc (tinker exit() → rc=1 even on the
+    # successful "already exists" skip). See generate_summary for detail.
+    out, err, rc = run_tinker(php)
+    if "EPISODE_NOT_FOUND" in out:
+        return False, f"Episode {episode_id} not found on prod"
+    if "NO_TRANSCRIPT" in out:
+        return False, "Episode has no transcript to build a study guide from"
+    m = re.search(r"\{[\s\S]*\}", out)
+    if m:
+        try:
+            return True, json.loads(m.group(0))
+        except json.JSONDecodeError:
+            pass
+    return False, (err.strip() or out.strip() or f"tinker rc={rc}")[:400]
+
+
 # ─── Main ────────────────────────────────────────────────────────────────────
 def parse_args():
     ap = argparse.ArgumentParser(
@@ -271,6 +386,10 @@ def parse_args():
                     help="Fuzzy-match prod episode title (overrides the auto stem-based match)")
     ap.add_argument("--no-confirm", action="store_true",
                     help="Skip the y/n confirmation prompt before pushing")
+    ap.add_argument("--no-summary", action="store_true",
+                    help="Skip auto-generating the episode ai_summary after the push")
+    ap.add_argument("--no-study-guide", action="store_true",
+                    help="Skip auto-generating the episode study_guide after the push")
     ap.add_argument("--stdout", action="store_true",
                     help="Print the Defuddle markdown to stdout instead of writing a file")
     return ap.parse_args()
@@ -342,6 +461,39 @@ def main():
     print(f"\n✓ Saved to prod episode {result['id']}: {result['title']}")
     print(f"  Transcript length: {result['transcript_len']:,} chars")
     print(f"  Has timestamps:    {'yes' if result['has_timestamps'] else 'no'}")
+
+    # 4. Fill in the ai_summary and study_guide IF MISSING. The scheduled
+    #    web-side sync is the source of truth and only fills empty fields; we
+    #    mirror that here as a safety net, because pushing the transcript
+    #    directly can run before that sync. Existing values are never clobbered.
+    if not args.no_summary:
+        print("\n▶ Checking episode summary...")
+        ok, sresult = generate_summary(result["id"])
+        if not ok:
+            print(f"  ⚠ Summary skipped: {sresult}")
+            print("    (transcript is saved; re-run to retry, or --no-summary to suppress)")
+        elif sresult.get("existed"):
+            print(f"  ✓ ai_summary already present ({sresult['summary_len']:,} chars) — left as-is")
+        elif sresult.get("summary_len", 0) > 0:
+            print(f"  ✓ ai_summary generated ({sresult['summary_len']:,} chars)")
+            print(f"    {sresult['summary'][:200]}"
+                  + ("…" if len(sresult.get("summary", "")) > 200 else ""))
+        else:
+            print("  ⚠ Summary generator returned empty — left ai_summary unchanged")
+
+    if not args.no_study_guide:
+        print("\n▶ Checking episode study guide...")
+        ok, gresult = generate_study_guide(result["id"])
+        if not ok:
+            print(f"  ⚠ Study guide skipped: {gresult}")
+            print("    (transcript is saved; re-run to retry, or --no-study-guide to suppress)")
+        elif gresult.get("existed"):
+            print(f"  ✓ study_guide already present ({len(gresult.get('sections', []))} sections) — left as-is")
+        elif gresult.get("has_guide"):
+            print(f"  ✓ study_guide generated ({len(gresult.get('sections', []))} sections: "
+                  f"{', '.join(gresult.get('sections', []))})")
+        else:
+            print("  ⚠ Study guide generator returned empty — left study_guide unchanged")
 
 
 def _print_episode(ep):
